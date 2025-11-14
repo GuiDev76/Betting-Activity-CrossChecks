@@ -34,7 +34,9 @@
             const [data, setData] = useState(null);
             const [timeWindow, setTimeWindow] = useState(15);
             const [selectedEvent, setSelectedEvent] = useState(null);
-            const [stakeThreshold, setStakeThreshold] = useState(30); // Seuil de similarité des mises en %
+            const [sortBy, setSortBy] = useState('time'); // 'time', 'players', 'severity'
+            const [activeTab, setActiveTab] = useState('clusters'); // 'clusters' ou 'players'
+            const [selectedPlayer, setSelectedPlayer] = useState(null);
 
             const handleFileUpload = async (event) => {
                 const file = event.target.files[0];
@@ -63,7 +65,7 @@
             };
 
             // Fonction pour vérifier si deux montants sont similaires
-            const areSimilarAmounts = (amount1, amount2, thresholdPercent) => {
+            const areSimilarAmounts = (amount1, amount2, thresholdPercent = 30) => {
                 const a1 = parseFloat(amount1);
                 const a2 = parseFloat(amount2);
                 if (isNaN(a1) || isNaN(a2)) return false;
@@ -119,13 +121,10 @@
                             const timeDiff = Math.abs(bTime - betTime) / (1000 * 60);
                             const bStake = parseFloat(b['Total Stake']);
                             
-                            // NOUVEAU CRITÈRE : Même événement + joueurs différents + fenêtre temporelle
+                            // CRITÈRE : Même événement + joueurs différents + fenêtre temporelle
                             const sameEvent = b.Event === bet.Event;
                             const differentPlayer = b['Party ID'] !== bet['Party ID'];
                             const withinTimeWindow = timeDiff <= timeWindow;
-                            
-                            // Vérifier si les montants sont similaires (optionnel mais renforce le signal)
-                            const similarAmounts = areSimilarAmounts(betStake, bStake, stakeThreshold);
                             
                             return sameEvent && differentPlayer && withinTimeWindow;
                         });
@@ -150,10 +149,13 @@
                         const stakes = allBets.map(b => parseFloat(b['Total Stake']) || 0);
                         const avgStake = stakes.reduce((a, b) => a + b, 0) / stakes.length;
                         const maxStakeDiff = Math.max(...stakes) - Math.min(...stakes);
-                        const stakeSimilarity = maxStakeDiff <= (avgStake * stakeThreshold / 100);
+                        const stakeSimilarity = maxStakeDiff <= (avgStake * 30 / 100);
 
                         // Grouper les sélections uniques
                         const selections = [...new Set(allBets.map(b => b['Selection Name']))];
+                        
+                        // CORRECTION : Compter les joueurs UNIQUES
+                        const uniquePlayers = [...new Set(allBets.map(b => b['Party ID']))];
 
                         clusters.push({
                             event: bet.Event,
@@ -161,7 +163,8 @@
                             sport: bet['Sport Type Name'],
                             competition: bet.Competition,
                             eventDate: bet['Event Date'],
-                            players: allBets.map(b => b['Party ID']),
+                            players: uniquePlayers, // Joueurs uniques uniquement
+                            allBets: allBets, // Tous les paris pour le détail
                             bets: allBets,
                             timeSpan: timeSpanMinutes,
                             firstBet: minTime,
@@ -174,8 +177,73 @@
                     }
                 });
 
-                return clusters.sort((a, b) => a.timeSpan - b.timeSpan);
-            }, [data, timeWindow, stakeThreshold]);
+                // Appliquer le tri
+                let sorted = [...clusters];
+                if (sortBy === 'time') {
+                    sorted = sorted.sort((a, b) => a.timeSpan - b.timeSpan);
+                } else if (sortBy === 'players') {
+                    sorted = sorted.sort((a, b) => b.players.length - a.players.length);
+                } else if (sortBy === 'severity') {
+                    const severityOrder = { critical: 0, high: 1, medium: 2 };
+                    sorted = sorted.sort((a, b) => severityOrder[a.severity] - severityOrder[b.severity]);
+                }
+
+                return sorted;
+            }, [data, timeWindow, sortBy]);
+
+            // Analyse des joueurs
+            const playerAnalysis = useMemo(() => {
+                if (!fraudClusters.length) return [];
+
+                const playersMap = new Map();
+
+                fraudClusters.forEach((cluster) => {
+                    cluster.players.forEach((playerId) => {
+                        if (!playersMap.has(playerId)) {
+                            playersMap.set(playerId, {
+                                id: playerId,
+                                clustersCount: 0,
+                                totalStake: 0,
+                                events: [],
+                                associates: new Set(),
+                                betsCount: 0
+                            });
+                        }
+
+                        const playerData = playersMap.get(playerId);
+                        playerData.clustersCount++;
+                        
+                        // Ajouter l'événement
+                        playerData.events.push({
+                            event: cluster.event,
+                            date: cluster.firstBet,
+                            sport: cluster.sport
+                        });
+
+                        // Trouver les paris de ce joueur dans ce cluster
+                        const playerBets = cluster.allBets.filter(b => b['Party ID'] === playerId);
+                        playerBets.forEach(bet => {
+                            playerData.totalStake += parseFloat(bet['Total Stake'] || 0);
+                            playerData.betsCount++;
+                        });
+
+                        // Ajouter tous les autres joueurs du cluster comme associés
+                        cluster.players.forEach(otherPlayer => {
+                            if (otherPlayer !== playerId) {
+                                playerData.associates.add(otherPlayer);
+                            }
+                        });
+                    });
+                });
+
+                // Convertir en tableau et trier
+                return Array.from(playersMap.values())
+                    .map(p => ({
+                        ...p,
+                        associates: Array.from(p.associates)
+                    }))
+                    .sort((a, b) => b.clustersCount - a.clustersCount);
+            }, [fraudClusters]);
 
             const stats = useMemo(() => {
                 if (!fraudClusters.length) return null;
@@ -196,16 +264,16 @@
                 if (!fraudClusters.length) return;
 
                 const csv = [
-                    ['Événement', 'Sélections', 'Joueurs Impliqués', 'Écart Temporel (min)', 'Sévérité', 'Mise Totale', 'Mise Moyenne', 'Montants Similaires', 'Premier Paris', 'Dernier Paris'].join(';'),
+                    ['Événement', 'Sélections', 'Joueurs Impliqués', 'Nombre Joueurs', 'Écart Temporel (min)', 'Sévérité', 'Mise Totale', 'Mise Moyenne', 'Premier Paris', 'Dernier Paris'].join(';'),
                     ...fraudClusters.map(c => [
                         c.event,
                         c.selections.join(' / '),
                         c.players.join(' | '),
+                        c.players.length,
                         c.timeSpan.toFixed(2),
                         c.severity === 'critical' ? 'CRITIQUE' : c.severity === 'high' ? 'ÉLEVÉ' : 'MOYEN',
                         c.totalStake.toFixed(2),
                         c.avgStake.toFixed(2),
-                        c.stakeSimilarity ? 'OUI' : 'NON',
                         c.firstBet.toLocaleString('fr-FR'),
                         c.lastBet.toLocaleString('fr-FR')
                     ].join(';'))
@@ -349,6 +417,32 @@
                             </div>
                         </div>
 
+                        {/* Onglets */}
+                        <div className="bg-white rounded-xl shadow-sm mb-6">
+                            <div className="flex border-b border-gray-200">
+                                <button
+                                    onClick={() => setActiveTab('clusters')}
+                                    className={`px-6 py-4 font-medium text-sm transition-colors ${
+                                        activeTab === 'clusters'
+                                            ? 'border-b-2 border-blue-600 text-blue-600'
+                                            : 'text-gray-600 hover:text-gray-900'
+                                    }`}
+                                >
+                                    📊 Clusters Suspects ({fraudClusters.length})
+                                </button>
+                                <button
+                                    onClick={() => setActiveTab('players')}
+                                    className={`px-6 py-4 font-medium text-sm transition-colors ${
+                                        activeTab === 'players'
+                                            ? 'border-b-2 border-blue-600 text-blue-600'
+                                            : 'text-gray-600 hover:text-gray-900'
+                                    }`}
+                                >
+                                    👥 Analyse Joueurs ({playerAnalysis.length})
+                                </button>
+                            </div>
+                        </div>
+
                         {stats && (
                             <div className="grid grid-cols-5 gap-4 mb-6">
                                 <div className="bg-white rounded-xl shadow-sm p-6">
@@ -403,7 +497,10 @@
                             </div>
                         )}
 
-                        <div className="bg-white rounded-xl shadow-sm p-4 mb-6">
+                        {/* Contenu selon l'onglet actif */}
+                        {activeTab === 'clusters' ? (
+                            <>
+                                <div className="bg-white rounded-xl shadow-sm p-4 mb-6">
                             <div className="flex items-center gap-6">
                                 <div className="flex items-center gap-2">
                                     <span className="text-2xl">⏱️</span>
@@ -423,19 +520,17 @@
                                 </div>
                                 
                                 <div className="flex items-center gap-2">
-                                    <span className="text-2xl">💵</span>
+                                    <span className="text-2xl">🔽</span>
                                     <label className="flex items-center gap-2">
-                                        <span className="text-sm font-medium text-gray-700">Similarité mises:</span>
+                                        <span className="text-sm font-medium text-gray-700">Trier par:</span>
                                         <select
-                                            value={stakeThreshold}
-                                            onChange={(e) => setStakeThreshold(Number(e.target.value))}
+                                            value={sortBy}
+                                            onChange={(e) => setSortBy(e.target.value)}
                                             className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                                         >
-                                            <option value={10}>±10%</option>
-                                            <option value={20}>±20%</option>
-                                            <option value={30}>±30%</option>
-                                            <option value={50}>±50%</option>
-                                            <option value={100}>Tous</option>
+                                            <option value="time">Écart temporel (plus rapide)</option>
+                                            <option value="severity">Gravité (plus critique)</option>
+                                            <option value="players">Nombre de joueurs (plus impliqués)</option>
                                         </select>
                                     </label>
                                 </div>
@@ -455,11 +550,6 @@
                                                 <span className={`px-3 py-1 rounded-full text-xs font-bold ${getSeverityBadge(cluster.severity)}`}>
                                                     ⏱️ {cluster.timeSpan.toFixed(1)} min
                                                 </span>
-                                                {cluster.stakeSimilarity && (
-                                                    <span className="px-3 py-1 rounded-full text-xs font-bold bg-purple-600 text-white">
-                                                        💵 Montants similaires
-                                                    </span>
-                                                )}
                                                 <span className="text-xs text-gray-500">⚽ {cluster.sport}</span>
                                             </div>
                                             <h3 className="text-lg font-semibold text-gray-900 mb-1">{cluster.event}</h3>
@@ -503,9 +593,9 @@
 
                                     {selectedEvent === index && (
                                         <div className="mt-6 pt-6 border-t border-gray-200">
-                                            <h4 className="font-semibold text-gray-900 mb-3">📋 Détail des paris ({cluster.bets.length})</h4>
+                                            <h4 className="font-semibold text-gray-900 mb-3">📋 Détail des paris ({cluster.allBets.length} paris - {cluster.players.length} joueurs uniques)</h4>
                                             <div className="space-y-2">
-                                                {cluster.bets.map((bet, bidx) => (
+                                                {cluster.allBets.map((bet, bidx) => (
                                                     <div key={bidx} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
                                                         <div className="flex items-center gap-4">
                                                             <span className="font-mono text-sm font-semibold text-blue-600">👤 #{bet['Party ID']}</span>
@@ -539,6 +629,107 @@
                                 <h3 className="text-xl font-semibold text-gray-900 mb-2">Aucune activité suspecte détectée</h3>
                                 <p className="text-gray-600">Aucun cluster de paris coordonnés trouvé avec les critères actuels.</p>
                                 <p className="text-gray-500 text-sm mt-2">Essayez d'ajuster la fenêtre temporelle ou le seuil de similarité des mises.</p>
+                            </div>
+                        )}
+                        </>
+                        ) : (
+                            /* Onglet Analyse Joueurs */
+                            <div className="space-y-4">
+                                {playerAnalysis.length === 0 ? (
+                                    <div className="bg-white rounded-xl shadow-sm p-12 text-center">
+                                        <div className="text-6xl mb-4">👤</div>
+                                        <h3 className="text-xl font-semibold text-gray-900 mb-2">Aucun joueur suspect</h3>
+                                        <p className="text-gray-600">Analysez d'abord les clusters dans l'onglet précédent.</p>
+                                    </div>
+                                ) : (
+                                    playerAnalysis.map((player, index) => (
+                                        <div
+                                            key={index}
+                                            className="bg-white rounded-xl shadow-sm p-6 hover:shadow-md transition-shadow cursor-pointer"
+                                            onClick={() => setSelectedPlayer(selectedPlayer === player.id ? null : player.id)}
+                                        >
+                                            <div className="flex items-start justify-between mb-4">
+                                                <div className="flex-1">
+                                                    <div className="flex items-center gap-3 mb-3">
+                                                        <h3 className="text-xl font-bold text-gray-900">
+                                                            👤 Joueur #{player.id}
+                                                        </h3>
+                                                        {player.clustersCount >= 5 && (
+                                                            <span className="px-3 py-1 rounded-full text-xs font-bold bg-red-600 text-white">
+                                                                ⚠️ HAUTE ACTIVITÉ
+                                                            </span>
+                                                        )}
+                                                    </div>
+                                                    
+                                                    <div className="grid grid-cols-4 gap-4">
+                                                        <div className="bg-red-50 rounded-lg p-3">
+                                                            <p className="text-xs text-red-600 mb-1">Clusters impliqués</p>
+                                                            <p className="text-2xl font-bold text-red-900">{player.clustersCount}</p>
+                                                        </div>
+                                                        <div className="bg-orange-50 rounded-lg p-3">
+                                                            <p className="text-xs text-orange-600 mb-1">Associés uniques</p>
+                                                            <p className="text-2xl font-bold text-orange-900">{player.associates.length}</p>
+                                                        </div>
+                                                        <div className="bg-blue-50 rounded-lg p-3">
+                                                            <p className="text-xs text-blue-600 mb-1">Total des paris</p>
+                                                            <p className="text-2xl font-bold text-blue-900">{player.betsCount}</p>
+                                                        </div>
+                                                        <div className="bg-green-50 rounded-lg p-3">
+                                                            <p className="text-xs text-green-600 mb-1">Mise totale</p>
+                                                            <p className="text-2xl font-bold text-green-900">{player.totalStake.toFixed(0)}€</p>
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            </div>
+
+                                            {selectedPlayer === player.id && (
+                                                <div className="mt-6 pt-6 border-t border-gray-200 space-y-6">
+                                                    {/* Réseau d'associés */}
+                                                    <div>
+                                                        <h4 className="font-semibold text-gray-900 mb-3 flex items-center gap-2">
+                                                            🔗 Réseau d'associés ({player.associates.length})
+                                                        </h4>
+                                                        <div className="flex flex-wrap gap-2">
+                                                            {player.associates.map((associate, idx) => (
+                                                                <span 
+                                                                    key={idx}
+                                                                    className="px-3 py-1 bg-blue-100 text-blue-800 rounded-lg text-sm font-semibold hover:bg-blue-200 cursor-pointer"
+                                                                    onClick={(e) => {
+                                                                        e.stopPropagation();
+                                                                        setActiveTab('players');
+                                                                        setSelectedPlayer(associate);
+                                                                    }}
+                                                                >
+                                                                    👤 #{associate}
+                                                                </span>
+                                                            ))}
+                                                        </div>
+                                                    </div>
+
+                                                    {/* Événements */}
+                                                    <div>
+                                                        <h4 className="font-semibold text-gray-900 mb-3 flex items-center gap-2">
+                                                            📋 Événements suspects ({player.events.length})
+                                                        </h4>
+                                                        <div className="space-y-2">
+                                                            {player.events.map((event, idx) => (
+                                                                <div key={idx} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
+                                                                    <div>
+                                                                        <p className="font-medium text-gray-900">{event.event}</p>
+                                                                        <p className="text-sm text-gray-600">⚽ {event.sport}</p>
+                                                                    </div>
+                                                                    <div className="text-right text-sm text-gray-600">
+                                                                        🕐 {event.date.toLocaleDateString('fr-FR')} {event.date.toLocaleTimeString('fr-FR')}
+                                                                    </div>
+                                                                </div>
+                                                            ))}
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            )}
+                                        </div>
+                                    ))
+                                )}
                             </div>
                         )}
                     </div>
