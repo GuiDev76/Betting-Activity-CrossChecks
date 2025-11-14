@@ -84,7 +84,16 @@
                 data.forEach((bet, index) => {
                     if (processed.has(index)) return;
 
-                    const betTime = new Date(`${bet['Placement Time']?.replace(' ', 'T')}`);
+                    // Parser la date au format DD/MM/YYYY HH:MM
+                    let betTime;
+                    try {
+                        const [datePart, timePart] = bet['Placement Time']?.split(' ') || [];
+                        const [day, month, year] = datePart?.split('/') || [];
+                        const [hours, minutes] = timePart?.split(':') || [];
+                        betTime = new Date(year, month - 1, day, hours, minutes);
+                    } catch (e) {
+                        return;
+                    }
                     if (isNaN(betTime)) return;
 
                     const betStake = parseFloat(bet['Total Stake']);
@@ -95,7 +104,16 @@
                         .filter((b, i) => {
                             if (i === index || processed.has(i)) return false;
                             
-                            const bTime = new Date(`${b['Placement Time']?.replace(' ', 'T')}`);
+                            // Parser la date
+                            let bTime;
+                            try {
+                                const [datePart, timePart] = b['Placement Time']?.split(' ') || [];
+                                const [day, month, year] = datePart?.split('/') || [];
+                                const [hours, minutes] = timePart?.split(':') || [];
+                                bTime = new Date(year, month - 1, day, hours, minutes);
+                            } catch (e) {
+                                return false;
+                            }
                             if (isNaN(bTime)) return false;
 
                             const timeDiff = Math.abs(bTime - betTime) / (1000 * 60);
@@ -116,7 +134,14 @@
                         const allBets = [{ ...bet, originalIndex: index }, ...relatedBets];
                         allBets.forEach(b => processed.add(b.originalIndex));
 
-                        const times = allBets.map(b => new Date(`${b['Placement Time']?.replace(' ', 'T')}`));
+                        // Parser toutes les dates pour calculer min/max
+                        const times = allBets.map(b => {
+                            const [datePart, timePart] = b['Placement Time']?.split(' ') || [];
+                            const [day, month, year] = datePart?.split('/') || [];
+                            const [hours, minutes] = timePart?.split(':') || [];
+                            return new Date(year, month - 1, day, hours, minutes);
+                        }).filter(t => !isNaN(t));
+                        
                         const minTime = new Date(Math.min(...times));
                         const maxTime = new Date(Math.max(...times));
                         const timeSpanMinutes = (maxTime - minTime) / (1000 * 60);
