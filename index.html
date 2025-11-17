@@ -97,13 +97,20 @@
                         const lines = text.split('\n');
                         log.push(`📊 ${lines.length} lignes détectées`);
                         
-                        const headers = lines[0].split(';');
+                        // Détecter automatiquement le séparateur (virgule ou point-virgule)
+                        const firstLine = lines[0];
+                        const commaCount = (firstLine.match(/,/g) || []).length;
+                        const semicolonCount = (firstLine.match(/;/g) || []).length;
+                        const separator = commaCount > semicolonCount ? ',' : ';';
+                        log.push(`🔍 Séparateur détecté: "${separator}" (virgules: ${commaCount}, points-virgules: ${semicolonCount})`);
+                        
+                        const headers = lines[0].split(separator);
                         log.push(`📋 ${headers.length} colonnes détectées`);
                         
                         parsedData = lines.slice(1)
                             .filter(line => line.trim())
                             .map(line => {
-                                const values = line.split(';');
+                                const values = line.split(separator);
                                 return headers.reduce((obj, header, index) => {
                                     obj[header.trim()] = values[index]?.trim() || '';
                                     return obj;
