@@ -193,10 +193,11 @@
                     }
                     if (isNaN(betTime)) return;
 
+                    // PHASE 1: Chercher sur MÊME MARKET + MÊME SÉLECTION (le plus prioritaire)
                     const sameMarketSameSelection = data
                         .map((b, i) => ({ ...b, originalIndex: i }))
                         .filter((b, i) => {
-                            if (i === index || processed.has(i)) return false;
+                            if (i === index) return false;
                             
                             let bTime;
                             try {
@@ -220,100 +221,11 @@
                             return sameEvent && sameMarket && sameSelection && differentPlayer && withinTimeWindow;
                         });
 
-                    const sameMarketOppositeSelection = sameMarketSameSelection.length === 0
-                        ? data
-                            .map((b, i) => ({ ...b, originalIndex: i }))
-                            .filter((b, i) => {
-                                if (i === index || processed.has(i)) return false;
-                                
-                                let bTime;
-                                try {
-                                    const [datePart, timePart] = b['Placement Time']?.split(' ') || [];
-                                    const [day, month, year] = datePart?.split('/') || [];
-                                    const [hours, minutes] = timePart?.split(':') || [];
-                                    bTime = new Date(year, month - 1, day, hours, minutes);
-                                } catch (e) {
-                                    return false;
-                                }
-                                if (isNaN(bTime)) return false;
-
-                                const timeDiff = Math.abs(bTime - betTime) / (1000 * 60);
-                                
-                                const sameEvent = b.Event === bet.Event;
-                                const sameMarket = b.Market === bet.Market;
-                                const oppositeSelection = areOppositeSelections(bet['Selection Name'], b['Selection Name'], bet.Market);
-                                const differentPlayer = b['Party ID'] !== bet['Party ID'];
-                                const withinTimeWindow = timeDiff <= timeWindow;
-                                
-                                return sameEvent && sameMarket && oppositeSelection && differentPlayer && withinTimeWindow;
-                            })
-                        : [];
-
-                    const sameMarketOther = (sameMarketSameSelection.length === 0 && sameMarketOppositeSelection.length === 0)
-                        ? data
-                            .map((b, i) => ({ ...b, originalIndex: i }))
-                            .filter((b, i) => {
-                                if (i === index || processed.has(i)) return false;
-                                
-                                let bTime;
-                                try {
-                                    const [datePart, timePart] = b['Placement Time']?.split(' ') || [];
-                                    const [day, month, year] = datePart?.split('/') || [];
-                                    const [hours, minutes] = timePart?.split(':') || [];
-                                    bTime = new Date(year, month - 1, day, hours, minutes);
-                                } catch (e) {
-                                    return false;
-                                }
-                                if (isNaN(bTime)) return false;
-
-                                const timeDiff = Math.abs(bTime - betTime) / (1000 * 60);
-                                
-                                const sameEvent = b.Event === bet.Event;
-                                const sameMarket = b.Market === bet.Market;
-                                const differentPlayer = b['Party ID'] !== bet['Party ID'];
-                                const withinTimeWindow = timeDiff <= timeWindow;
-                                
-                                return sameEvent && sameMarket && differentPlayer && withinTimeWindow;
-                            })
-                        : [];
-
-                    const sameEventOnly = (sameMarketSameSelection.length === 0 && sameMarketOppositeSelection.length === 0 && sameMarketOther.length === 0)
-                        ? data
-                            .map((b, i) => ({ ...b, originalIndex: i }))
-                            .filter((b, i) => {
-                                if (i === index || processed.has(i)) return false;
-                                
-                                let bTime;
-                                try {
-                                    const [datePart, timePart] = b['Placement Time']?.split(' ') || [];
-                                    const [day, month, year] = datePart?.split('/') || [];
-                                    const [hours, minutes] = timePart?.split(':') || [];
-                                    bTime = new Date(year, month - 1, day, hours, minutes);
-                                } catch (e) {
-                                    return false;
-                                }
-                                if (isNaN(bTime)) return false;
-
-                                const timeDiff = Math.abs(bTime - betTime) / (1000 * 60);
-                                
-                                const sameEvent = b.Event === bet.Event;
-                                const differentPlayer = b['Party ID'] !== bet['Party ID'];
-                                const withinTimeWindow = timeDiff <= timeWindow;
-                                
-                                return sameEvent && differentPlayer && withinTimeWindow;
-                            })
-                        : [];
-
-                    const relatedBets = sameMarketSameSelection.length > 0 
-                        ? sameMarketSameSelection 
-                        : sameMarketOppositeSelection.length > 0
-                            ? sameMarketOppositeSelection
-                            : sameMarketOther.length > 0
-                                ? sameMarketOther
-                                : sameEventOnly;
-
-                    if (relatedBets.length > 0) {
-                        const allBets = [{ ...bet, originalIndex: index }, ...relatedBets];
+                    // Si on a trouvé des paris identiques, créer un cluster
+                    if (sameMarketSameSelection.length > 0) {
+                        const allBets = [{ ...bet, originalIndex: index }, ...sameMarketSameSelection];
+                        
+                        // Marquer UNIQUEMENT ces paris comme traités
                         allBets.forEach(b => processed.add(b.originalIndex));
 
                         const times = allBets.map(b => {
@@ -336,23 +248,82 @@
                         const markets = [...new Set(allBets.map(b => b.Market))];
                         const uniquePlayers = [...new Set(allBets.map(b => b['Party ID']))];
                         
-                        const allSameMarket = markets.length === 1;
-                        const allSameSelection = selections.length === 1;
+                        clusters.push({
+                            event: bet.Event,
+                            selections: selections,
+                            markets: markets,
+                            sport: bet['Sport Type Name'],
+                            competition: bet.Competition,
+                            eventDate: bet['Event Date'],
+                            players: uniquePlayers,
+                            allBets: allBets,
+                            bets: allBets,
+                            timeSpan: timeSpanMinutes,
+                            firstBet: minTime,
+                            lastBet: maxTime,
+                            totalStake: allBets.reduce((sum, b) => sum + parseFloat(b['Total Stake'] || 0), 0),
+                            avgStake: avgStake,
+                            stakeSimilarity: stakeSimilarity,
+                            allSameSelection: true,
+                            allSameMarket: true,
+                            fraudType: 'bonus_abuser',
+                            severity: timeSpanMinutes <= 5 ? 'critical' : timeSpanMinutes <= 15 ? 'high' : 'medium'
+                        });
                         
-                        let fraudType = 'other';
-                        if (allSameMarket && allSameSelection) {
-                            fraudType = 'bonus_abuser';
-                        } else if (allSameMarket && selections.length === 2) {
-                            const sel1 = selections[0];
-                            const sel2 = selections[1];
-                            if (areOppositeSelections(sel1, sel2, markets[0])) {
-                                fraudType = 'money_laundering';
-                            } else {
-                                fraudType = 'suspicious';
+                        return; // Continuer avec le prochain pari
+                    }
+
+                    // PHASE 2: Chercher sur MÊME MARKET + SÉLECTIONS OPPOSÉES
+                    const sameMarketOppositeSelection = data
+                        .map((b, i) => ({ ...b, originalIndex: i }))
+                        .filter((b, i) => {
+                            if (i === index || processed.has(i)) return false;
+                            
+                            let bTime;
+                            try {
+                                const [datePart, timePart] = b['Placement Time']?.split(' ') || [];
+                                const [day, month, year] = datePart?.split('/') || [];
+                                const [hours, minutes] = timePart?.split(':') || [];
+                                bTime = new Date(year, month - 1, day, hours, minutes);
+                            } catch (e) {
+                                return false;
                             }
-                        } else if (allSameMarket) {
-                            fraudType = 'suspicious';
-                        }
+                            if (isNaN(bTime)) return false;
+
+                            const timeDiff = Math.abs(bTime - betTime) / (1000 * 60);
+                            
+                            const sameEvent = b.Event === bet.Event;
+                            const sameMarket = b.Market === bet.Market;
+                            const oppositeSelection = areOppositeSelections(bet['Selection Name'], b['Selection Name'], bet.Market);
+                            const differentPlayer = b['Party ID'] !== bet['Party ID'];
+                            const withinTimeWindow = timeDiff <= timeWindow;
+                            
+                            return sameEvent && sameMarket && oppositeSelection && differentPlayer && withinTimeWindow;
+                        });
+
+                    if (sameMarketOppositeSelection.length > 0) {
+                        const allBets = [{ ...bet, originalIndex: index }, ...sameMarketOppositeSelection];
+                        allBets.forEach(b => processed.add(b.originalIndex));
+
+                        const times = allBets.map(b => {
+                            const [datePart, timePart] = b['Placement Time']?.split(' ') || [];
+                            const [day, month, year] = datePart?.split('/') || [];
+                            const [hours, minutes] = timePart?.split(':') || [];
+                            return new Date(year, month - 1, day, hours, minutes);
+                        }).filter(t => !isNaN(t));
+                        
+                        const minTime = new Date(Math.min(...times));
+                        const maxTime = new Date(Math.max(...times));
+                        const timeSpanMinutes = (maxTime - minTime) / (1000 * 60);
+
+                        const stakes = allBets.map(b => parseFloat(b['Total Stake']) || 0);
+                        const avgStake = stakes.reduce((a, b) => a + b, 0) / stakes.length;
+                        const maxStakeDiff = Math.max(...stakes) - Math.min(...stakes);
+                        const stakeSimilarity = maxStakeDiff <= (avgStake * 30 / 100);
+
+                        const selections = [...new Set(allBets.map(b => b['Selection Name']))];
+                        const markets = [...new Set(allBets.map(b => b.Market))];
+                        const uniquePlayers = [...new Set(allBets.map(b => b['Party ID']))];
 
                         clusters.push({
                             event: bet.Event,
@@ -370,9 +341,85 @@
                             totalStake: allBets.reduce((sum, b) => sum + parseFloat(b['Total Stake'] || 0), 0),
                             avgStake: avgStake,
                             stakeSimilarity: stakeSimilarity,
-                            allSameSelection: allSameSelection,
-                            allSameMarket: allSameMarket,
-                            fraudType: fraudType,
+                            allSameSelection: false,
+                            allSameMarket: true,
+                            fraudType: 'money_laundering',
+                            severity: timeSpanMinutes <= 5 ? 'critical' : timeSpanMinutes <= 15 ? 'high' : 'medium'
+                        });
+                        
+                        return;
+                    }
+
+                    // PHASE 3: Chercher sur MÊME MARKET (autres combinaisons)
+                    const sameMarketOther = data
+                        .map((b, i) => ({ ...b, originalIndex: i }))
+                        .filter((b, i) => {
+                            if (i === index || processed.has(i)) return false;
+                            
+                            let bTime;
+                            try {
+                                const [datePart, timePart] = b['Placement Time']?.split(' ') || [];
+                                const [day, month, year] = datePart?.split('/') || [];
+                                const [hours, minutes] = timePart?.split(':') || [];
+                                bTime = new Date(year, month - 1, day, hours, minutes);
+                            } catch (e) {
+                                return false;
+                            }
+                            if (isNaN(bTime)) return false;
+
+                            const timeDiff = Math.abs(bTime - betTime) / (1000 * 60);
+                            
+                            const sameEvent = b.Event === bet.Event;
+                            const sameMarket = b.Market === bet.Market;
+                            const differentPlayer = b['Party ID'] !== bet['Party ID'];
+                            const withinTimeWindow = timeDiff <= timeWindow;
+                            
+                            return sameEvent && sameMarket && differentPlayer && withinTimeWindow;
+                        });
+
+                    if (sameMarketOther.length > 0) {
+                        const allBets = [{ ...bet, originalIndex: index }, ...sameMarketOther];
+                        allBets.forEach(b => processed.add(b.originalIndex));
+
+                        const times = allBets.map(b => {
+                            const [datePart, timePart] = b['Placement Time']?.split(' ') || [];
+                            const [day, month, year] = datePart?.split('/') || [];
+                            const [hours, minutes] = timePart?.split(':') || [];
+                            return new Date(year, month - 1, day, hours, minutes);
+                        }).filter(t => !isNaN(t));
+                        
+                        const minTime = new Date(Math.min(...times));
+                        const maxTime = new Date(Math.max(...times));
+                        const timeSpanMinutes = (maxTime - minTime) / (1000 * 60);
+
+                        const stakes = allBets.map(b => parseFloat(b['Total Stake']) || 0);
+                        const avgStake = stakes.reduce((a, b) => a + b, 0) / stakes.length;
+                        const maxStakeDiff = Math.max(...stakes) - Math.min(...stakes);
+                        const stakeSimilarity = maxStakeDiff <= (avgStake * 30 / 100);
+
+                        const selections = [...new Set(allBets.map(b => b['Selection Name']))];
+                        const markets = [...new Set(allBets.map(b => b.Market))];
+                        const uniquePlayers = [...new Set(allBets.map(b => b['Party ID']))];
+
+                        clusters.push({
+                            event: bet.Event,
+                            selections: selections,
+                            markets: markets,
+                            sport: bet['Sport Type Name'],
+                            competition: bet.Competition,
+                            eventDate: bet['Event Date'],
+                            players: uniquePlayers,
+                            allBets: allBets,
+                            bets: allBets,
+                            timeSpan: timeSpanMinutes,
+                            firstBet: minTime,
+                            lastBet: maxTime,
+                            totalStake: allBets.reduce((sum, b) => sum + parseFloat(b['Total Stake'] || 0), 0),
+                            avgStake: avgStake,
+                            stakeSimilarity: stakeSimilarity,
+                            allSameSelection: false,
+                            allSameMarket: true,
+                            fraudType: 'suspicious',
                             severity: timeSpanMinutes <= 5 ? 'critical' : timeSpanMinutes <= 15 ? 'high' : 'medium'
                         });
                     }
@@ -1065,17 +1112,3 @@
                                                 </div>
                                             )}
                                         </div>
-                                    ))
-                                )}
-                            </div>
-                        )}
-                    </div>
-                </div>
-            );
-        };
-
-        const root = ReactDOM.createRoot(document.getElementById('root'));
-        root.render(<FraudDetectionDashboard />);
-    </script>
-</body>
-</html>
