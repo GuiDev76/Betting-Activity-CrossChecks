@@ -29,7 +29,7 @@
                     const isExcel = file.name.match(/\.xlsx?$/i);
                     let parsed;
                     if (isExcel) {
-                        if (!window.XLSX) { alert('Excel lib error'); return; }
+                        if (!window.XLSX) { alert('Erreur bibliothèque Excel'); return; }
                         const buf = await file.arrayBuffer();
                         const wb = XLSX.read(buf, {type:'array'});
                         parsed = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], {raw:false, defval:''});
@@ -63,7 +63,6 @@
                         const [d,t] = bet['Placement Time']?.split(' ')||[];
                         const [dy,mo,yr] = d?.split('/')||[];
                         
-                        // Gérer le format AM/PM
                         let timeStr = t;
                         let isPM = false;
                         
@@ -75,7 +74,6 @@
                         const [h,m] = timeStr?.split(':')||[];
                         let hours = parseInt(h);
                         
-                        // Conversion AM/PM vers 24h
                         if (isPM && hours !== 12) {
                             hours += 12;
                         } else if (!isPM && hours === 12) {
@@ -353,7 +351,6 @@
                                         
                                         {selectedEvent===i && (
                                             <div className="space-y-2">
-                                                {/* En-tête des colonnes */}
                                                 <div className="flex justify-between p-3 bg-blue-100 rounded-lg font-semibold text-sm flex-wrap gap-4">
                                                     <div className="flex gap-4 flex-wrap items-center">
                                                         <span className="min-w-[80px]">🕐 Heure</span>
@@ -366,12 +363,11 @@
                                                         <span>Statut</span>
                                                     </div>
                                                 </div>
-                                                {/* Lignes de données */}
                                                 {c.bets.map((b,j)=>(
                                                     <div key={j} className="flex justify-between p-3 bg-gray-50 rounded-lg flex-wrap gap-4">
                                                         <div className="flex gap-4 flex-wrap items-center">
-                                                            <span className="text-sm text-gray-500 font-medium min-w-[80px]">
-                                                                {b.parsedTime.toLocaleTimeString('fr-FR', {hour:'2-digit',minute:'2-digit'})}
+                                                            <span className="text-sm text-gray-700 font-medium min-w-[80px]">
+                                                                {b.parsedTime.toLocaleTimeString('fr-FR', {hour:'2-digit',minute:'2-digit',hour12:false})}
                                                             </span>
                                                             <span className="font-mono text-sm font-semibold text-blue-600 min-w-[120px]">
                                                                 {b['Party ID']}
@@ -402,13 +398,13 @@
                                         <div className="bg-gray-50 rounded p-3">
                                             <p className="text-gray-600 mb-1">⏰ Premier pari</p>
                                             <p className="font-medium text-gray-900">
-                                                {c.firstBet.toLocaleDateString('fr-FR')} {c.firstBet.toLocaleTimeString('fr-FR', {hour:'2-digit',minute:'2-digit'})}
+                                                {c.firstBet.toLocaleDateString('fr-FR')} {c.firstBet.toLocaleTimeString('fr-FR', {hour:'2-digit',minute:'2-digit',hour12:false})}
                                             </p>
                                         </div>
                                         <div className="bg-gray-50 rounded p-3">
                                             <p className="text-gray-600 mb-1">⏰ Dernier pari</p>
                                             <p className="font-medium text-gray-900">
-                                                {c.lastBet.toLocaleDateString('fr-FR')} {c.lastBet.toLocaleTimeString('fr-FR', {hour:'2-digit',minute:'2-digit'})}
+                                                {c.lastBet.toLocaleDateString('fr-FR')} {c.lastBet.toLocaleTimeString('fr-FR', {hour:'2-digit',minute:'2-digit',hour12:false})}
                                             </p>
                                         </div>
                                     </div>
