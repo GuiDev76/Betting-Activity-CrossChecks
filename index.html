@@ -52,14 +52,12 @@
             const eventClusters = useMemo(() => {
                 if(!data) return [];
                 
-                // Grouper tous les paris par événement
                 const eventMap = new Map();
                 
                 data.forEach((bet, idx) => {
                     const eventName = bet.Event;
                     if(!eventName) return;
                     
-                    // Parser la date
                     let betTime;
                     try {
                         const [d,t] = bet['Placement Time']?.split(' ')||[];
@@ -86,23 +84,15 @@
                     });
                 });
                 
-                // Convertir en array et filtrer
                 const clusters = Array.from(eventMap.values()).map(cluster => {
-                    // Trier les paris par: Temps → Market → Sélection
                     const sortedBets = [...cluster.bets].sort((a, b) => {
-                        // D'abord par temps
                         const timeDiff = a.parsedTime - b.parsedTime;
                         if (timeDiff !== 0) return timeDiff;
-                        
-                        // Puis par Market
                         const marketCompare = (a.Market || '').localeCompare(b.Market || '');
                         if (marketCompare !== 0) return marketCompare;
-                        
-                        // Enfin par Sélection
                         return (a['Selection Name'] || '').localeCompare(b['Selection Name'] || '');
                     });
                     
-                    // Calculer les stats
                     const uniquePlayers = [...new Set(sortedBets.map(b => b['Party ID']))];
                     const times = sortedBets.map(b => b.parsedTime);
                     const minTime = new Date(Math.min(...times));
@@ -125,15 +115,23 @@
                         severity: timeSpan <= 5 ? 'critical' : timeSpan <= 15 ? 'high' : timeSpan <= 30 ? 'medium' : 'low'
                     };
                 }).filter(c => {
-                    // Filtrer selon les critères
                     return c.playerCount >= minPlayers && c.timeSpan <= timeWindow;
                 }).sort((a, b) => {
-                    // Trier par nombre de joueurs (plus suspect = plus de joueurs)
-                    return b.playerCount - a.playerCount;
+                    if (sortBy === 'risk') {
+                        if (b.playerCount !== a.playerCount) {
+                            return b.playerCount - a.playerCount;
+                        }
+                        return a.timeSpan - b.timeSpan;
+                    } else if (sortBy === 'date') {
+                        return b.firstBet - a.firstBet;
+                    } else if (sortBy === 'players') {
+                        return b.playerCount - a.playerCount;
+                    }
+                    return 0;
                 });
                 
                 return clusters;
-            }, [data, timeWindow, minPlayers]);
+            }, [data, timeWindow, minPlayers, sortBy]);
 
             const stats = useMemo(() => {
                 if(!eventClusters.length) return null;
@@ -188,13 +186,6 @@
                                             📁 Sélectionner fichier (CSV/Excel)
                                         </div>
                                     </label>
-                                    <div className="mt-12 w-full max-w-2xl">
-                                        <h3 className="text-lg font-semibold text-gray-900 mb-4 text-center">Comment ça marche ?</h3>
-                                        <div className="bg-blue-50 rounded-lg p-4">
-                                            <div className="font-semibold text-blue-900 mb-2">📊 Analyse par événement</div>
-                                            <div className="text-sm text-blue-700">Tous les paris sur un même match sont regroupés et triés chronologiquement</div>
-                                        </div>
-                                    </div>
                                 </div>
                             </div>
                         </div>
@@ -253,7 +244,16 @@
                         )}
 
                         <div className="bg-white rounded-xl shadow-sm p-4 mb-6">
-                            <div className="flex gap-6">
+                            <div className="flex gap-6 flex-wrap">
+                                <label className="flex items-center gap-2">
+                                    <span className="text-sm font-medium text-gray-700">🔽 Trier par:</span>
+                                    <select value={sortBy} onChange={e=>setSortBy(e.target.value)} 
+                                        className="px-3 py-2 border border-gray-300 rounded-lg">
+                                        <option value="risk">Risque (plus suspect)</option>
+                                        <option value="date">Date (plus récent)</option>
+                                        <option value="players">Nombre de comptes</option>
+                                    </select>
+                                </label>
                                 <label className="flex items-center gap-2">
                                     <span className="text-sm font-medium text-gray-700">⏱️ Fenêtre max:</span>
                                     <select value={timeWindow} onChange={e=>setTimeWindow(+e.target.value)} 
@@ -388,7 +388,6 @@
                                 <div className="text-6xl mb-4">✅</div>
                                 <h3 className="text-xl font-semibold text-gray-900 mb-2">Aucun événement suspect</h3>
                                 <p className="text-gray-600">Aucun événement ne correspond aux critères de détection.</p>
-                                <p className="text-gray-500 text-sm mt-2">Essayez d'ajuster la fenêtre temporelle ou le nombre minimum de comptes.</p>
                             </div>
                         )}
                     </div>
