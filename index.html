@@ -3,33 +3,15 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Dashboard Détection Fraude - Paris Coordonnés</title>
-    
-    <!-- Tailwind CSS -->
+    <title>Dashboard Détection Fraude</title>
     <script src="https://cdn.tailwindcss.com"></script>
-    
-    <!-- React & ReactDOM -->
     <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
-    
-    <!-- Babel pour JSX -->
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-    
-    <!-- SheetJS pour lire les fichiers Excel -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
-    
-    <style>
-        body {
-            margin: 0;
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen', 'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue', sans-serif;
-            -webkit-font-smoothing: antialiased;
-            -moz-osx-font-smoothing: grayscale;
-        }
-    </style>
 </head>
 <body>
     <div id="root"></div>
-
     <script type="text/babel">
         const { useState, useMemo } = React;
 
@@ -41,619 +23,250 @@
             const [activeTab, setActiveTab] = useState('clusters');
             const [selectedPlayer, setSelectedPlayer] = useState(null);
             const [showDebug, setShowDebug] = useState(false);
-            const [detectedColumns, setDetectedColumns] = useState([]);
             const [uploadLog, setUploadLog] = useState([]);
 
-            const handleFileUpload = async (event) => {
-                const file = event.target.files[0];
+            const handleFileUpload = async (e) => {
+                const file = e.target.files[0];
                 if (!file) return;
-
-                const log = [];
-                log.push(`📁 Fichier sélectionné: ${file.name} (${(file.size / 1024).toFixed(2)} KB)`);
-                
+                const log = [`📁 ${file.name} (${(file.size/1024).toFixed(2)}KB)`];
                 try {
-                    const isExcel = file.name.endsWith('.xlsx') || file.name.endsWith('.xls');
-                    log.push(`📋 Type détecté: ${isExcel ? 'Excel' : 'CSV'}`);
-                    
-                    let parsedData;
-                    
+                    const isExcel = file.name.match(/\.xlsx?$/i);
+                    let parsed;
                     if (isExcel) {
-                        log.push(`⏳ Lecture du fichier Excel...`);
-                        
-                        if (typeof XLSX === 'undefined') {
-                            log.push(`❌ ERREUR: Bibliothèque SheetJS non chargée`);
-                            setUploadLog(log);
-                            setShowDebug(true);
-                            alert('❌ ERREUR: La bibliothèque Excel n\'est pas chargée. Vérifiez votre connexion internet ou contactez l\'administrateur.');
-                            return;
-                        }
-                        
-                        log.push(`✅ SheetJS chargé correctement`);
-                        
-                        const arrayBuffer = await file.arrayBuffer();
-                        log.push(`✅ Fichier lu en mémoire (${arrayBuffer.byteLength} bytes)`);
-                        
-                        const workbook = XLSX.read(arrayBuffer, { type: 'array' });
-                        log.push(`✅ Workbook analysé: ${workbook.SheetNames.length} feuille(s)`);
-                        
-                        const firstSheetName = workbook.SheetNames[0];
-                        log.push(`📊 Lecture de la feuille: "${firstSheetName}"`);
-                        
-                        const worksheet = workbook.Sheets[firstSheetName];
-                        
-                        parsedData = XLSX.utils.sheet_to_json(worksheet, { 
-                            raw: false,
-                            defval: ''
+                        if (!window.XLSX) { alert('Excel lib error'); return; }
+                        const buf = await file.arrayBuffer();
+                        const wb = XLSX.read(buf, {type:'array'});
+                        parsed = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], {raw:false, defval:''});
+                        log.push(`✅ ${parsed.length} lignes`);
+                    } else {
+                        const txt = await file.text();
+                        const lines = txt.split('\n');
+                        const sep = (lines[0].match(/,/g)||[]).length > (lines[0].match(/;/g)||[]).length ? ',' : ';';
+                        const headers = lines[0].split(sep);
+                        parsed = lines.slice(1).filter(l=>l.trim()).map(l => {
+                            const v = l.split(sep);
+                            return headers.reduce((o,h,i) => ({...o, [h.trim()]: v[i]?.trim()||''}), {});
                         });
-                        
-                        log.push(`✅ ${parsedData.length} lignes extraites`);
-                    } else {
-                        log.push(`⏳ Lecture du fichier CSV...`);
-                        
-                        const text = await file.text();
-                        log.push(`✅ Fichier lu: ${text.length} caractères`);
-                        
-                        const lines = text.split('\n');
-                        log.push(`📊 ${lines.length} lignes détectées`);
-                        
-                        const firstLine = lines[0];
-                        const commaCount = (firstLine.match(/,/g) || []).length;
-                        const semicolonCount = (firstLine.match(/;/g) || []).length;
-                        const separator = commaCount > semicolonCount ? ',' : ';';
-                        log.push(`🔍 Séparateur détecté: "${separator}" (virgules: ${commaCount}, points-virgules: ${semicolonCount})`);
-                        
-                        const headers = lines[0].split(separator);
-                        log.push(`📋 ${headers.length} colonnes détectées`);
-                        
-                        parsedData = lines.slice(1)
-                            .filter(line => line.trim())
-                            .map(line => {
-                                const values = line.split(separator);
-                                return headers.reduce((obj, header, index) => {
-                                    obj[header.trim()] = values[index]?.trim() || '';
-                                    return obj;
-                                }, {});
-                            });
-                        
-                        log.push(`✅ ${parsedData.length} lignes parsées`);
+                        log.push(`✅ ${parsed.length} lignes`);
                     }
-
-                    if (parsedData.length === 0) {
-                        log.push(`⚠️ ATTENTION: Aucune donnée trouvée dans le fichier`);
-                        setUploadLog(log);
-                        setShowDebug(true);
-                        alert('⚠️ Le fichier est vide ou mal formaté. Aucune donnée n\'a pu être extraite.');
-                        return;
-                    }
-
-                    const columns = parsedData.length > 0 ? Object.keys(parsedData[0]) : [];
-                    log.push(`📋 Colonnes trouvées: ${columns.join(', ')}`);
-                    setDetectedColumns(columns);
-                    
-                    const requiredColumns = ['Placement Time', 'Party ID', 'Event', 'Total Stake', 'Selection Name', 'Sport Type Name', 'Competition', 'Event Date', 'Bet Status', 'Market'];
-                    const missingColumns = requiredColumns.filter(col => !columns.includes(col));
-                    
-                    if (missingColumns.length > 0) {
-                        log.push(`⚠️ Colonnes manquantes: ${missingColumns.join(', ')}`);
-                        setShowDebug(true);
-                        console.warn('Colonnes manquantes:', missingColumns);
-                        console.log('Colonnes détectées:', columns);
-                        alert(`⚠️ ATTENTION: Le fichier ne contient pas toutes les colonnes requises.\n\nColonnes manquantes:\n${missingColumns.join('\n')}\n\nVérifiez le panneau de debug pour plus de détails.`);
-                    } else {
-                        log.push(`✅ Toutes les colonnes requises sont présentes`);
-                    }
-
-                    log.push(`✅ Import réussi!`);
                     setUploadLog(log);
-                    setData(parsedData);
-                    
-                } catch (error) {
-                    log.push(`❌ ERREUR: ${error.message}`);
+                    setData(parsed);
+                } catch(err) {
+                    log.push(`❌ ${err.message}`);
                     setUploadLog(log);
                     setShowDebug(true);
-                    console.error('Erreur lors du chargement du fichier:', error);
-                    alert(`❌ Erreur lors du chargement du fichier:\n${error.message}\n\nVérifiez le panneau de debug pour plus de détails.`);
+                    alert('Erreur: '+err.message);
                 }
             };
 
-            const areOppositeSelections = (sel1, sel2, market) => {
-                const s1 = sel1.toLowerCase();
-                const s2 = sel2.toLowerCase();
-                
-                if (market && market.toLowerCase().includes('winner')) {
-                    return s1 !== s2;
-                }
-                
-                if (s1.includes('over') && s2.includes('under')) return true;
-                if (s1.includes('under') && s2.includes('over')) return true;
-                
-                if (s1.includes('+') && s2.includes('-')) return true;
-                if (s1.includes('-') && s2.includes('+')) return true;
-                
-                return false;
+            const areOpposite = (s1, s2, m) => {
+                const a=s1.toLowerCase(), b=s2.toLowerCase();
+                if(m?.toLowerCase().includes('winner')) return a!==b;
+                return (a.includes('over')&&b.includes('under'))||(a.includes('under')&&b.includes('over'))||
+                       (a.includes('+')&&b.includes('-'))||(a.includes('-')&&b.includes('+'));
             };
 
             const fraudClusters = useMemo(() => {
-                if (!data) return [];
-
-                const clusters = [];
-                const processed = new Set();
-
-                data.forEach((bet, index) => {
-                    if (processed.has(index)) return;
-
-                    let betTime;
+                if(!data) return [];
+                const cls=[], proc=new Set();
+                
+                data.forEach((bet,idx) => {
+                    if(proc.has(idx)) return;
+                    let bt;
                     try {
-                        const [datePart, timePart] = bet['Placement Time']?.split(' ') || [];
-                        const [day, month, year] = datePart?.split('/') || [];
-                        const [hours, minutes] = timePart?.split(':') || [];
-                        betTime = new Date(year, month - 1, day, hours, minutes);
-                    } catch (e) {
-                        return;
-                    }
-                    if (isNaN(betTime)) return;
+                        const [d,t] = bet['Placement Time']?.split(' ')||[];
+                        const [dy,mo,yr] = d?.split('/')||[];
+                        const [h,m] = t?.split(':')||[];
+                        bt = new Date(yr,mo-1,dy,h,m);
+                    } catch(e) { return; }
+                    if(isNaN(bt)) return;
 
-                    // PHASE 1: Chercher sur MÊME MARKET + MÊME SÉLECTION (le plus prioritaire)
-                    const sameMarketSameSelection = data
-                        .map((b, i) => ({ ...b, originalIndex: i }))
-                        .filter((b, i) => {
-                            if (i === index) return false;
-                            
-                            let bTime;
-                            try {
-                                const [datePart, timePart] = b['Placement Time']?.split(' ') || [];
-                                const [day, month, year] = datePart?.split('/') || [];
-                                const [hours, minutes] = timePart?.split(':') || [];
-                                bTime = new Date(year, month - 1, day, hours, minutes);
-                            } catch (e) {
-                                return false;
-                            }
-                            if (isNaN(bTime)) return false;
+                    const same = data.map((b,i)=>({...b,originalIndex:i})).filter((b,i)=>{
+                        if(i===idx) return false;
+                        let t2;
+                        try {
+                            const [d,t]=(b['Placement Time']||'').split(' ');
+                            const [dy,mo,yr]=d.split('/');
+                            const [h,m]=t.split(':');
+                            t2=new Date(yr,mo-1,dy,h,m);
+                        } catch(e) { return false; }
+                        if(isNaN(t2)) return false;
+                        const diff=Math.abs(t2-bt)/(1000*60);
+                        return b.Event===bet.Event && b.Market===bet.Market && 
+                               b['Selection Name']===bet['Selection Name'] && 
+                               b['Party ID']!==bet['Party ID'] && diff<=timeWindow;
+                    });
 
-                            const timeDiff = Math.abs(bTime - betTime) / (1000 * 60);
-                            
-                            const sameEvent = b.Event === bet.Event;
-                            const sameMarket = b.Market === bet.Market;
-                            const sameSelection = b['Selection Name'] === bet['Selection Name'];
-                            const differentPlayer = b['Party ID'] !== bet['Party ID'];
-                            const withinTimeWindow = timeDiff <= timeWindow;
-                            
-                            return sameEvent && sameMarket && sameSelection && differentPlayer && withinTimeWindow;
+                    if(same.length>0) {
+                        const all=[{...bet,originalIndex:idx},...same];
+                        all.forEach(b=>proc.add(b.originalIndex));
+                        const times=all.map(b=>{
+                            try{
+                                const[d,t]=b['Placement Time'].split(' ');
+                                const[dy,mo,yr]=d.split('/');
+                                const[h,m]=t.split(':');
+                                return new Date(yr,mo-1,dy,h,m);
+                            }catch(e){return null;}
+                        }).filter(t=>t&&!isNaN(t));
+                        const minT=new Date(Math.min(...times)), maxT=new Date(Math.max(...times));
+                        const span=(maxT-minT)/(1000*60);
+                        const stakes=all.map(b=>parseFloat(b['Total Stake'])||0);
+                        const avg=stakes.reduce((a,b)=>a+b,0)/stakes.length;
+                        const players=[...new Set(all.map(b=>b['Party ID']))];
+                        const sels=[...new Set(all.map(b=>b['Selection Name']))];
+                        const mkts=[...new Set(all.map(b=>b.Market))];
+                        
+                        cls.push({
+                            event:bet.Event, selections:sels, markets:mkts,
+                            sport:bet['Sport Type Name'], competition:bet.Competition,
+                            players, allBets:all, timeSpan:span, firstBet:minT, lastBet:maxT,
+                            totalStake:stakes.reduce((a,b)=>a+b,0), avgStake:avg,
+                            fraudType:'bonus_abuser', allSameSelection:true, allSameMarket:true,
+                            severity:span<=5?'critical':span<=15?'high':'medium'
                         });
-
-                    // Si on a trouvé des paris identiques, créer un cluster
-                    if (sameMarketSameSelection.length > 0) {
-                        const allBets = [{ ...bet, originalIndex: index }, ...sameMarketSameSelection];
-                        
-                        // Marquer UNIQUEMENT ces paris comme traités
-                        allBets.forEach(b => processed.add(b.originalIndex));
-
-                        const times = allBets.map(b => {
-                            const [datePart, timePart] = b['Placement Time']?.split(' ') || [];
-                            const [day, month, year] = datePart?.split('/') || [];
-                            const [hours, minutes] = timePart?.split(':') || [];
-                            return new Date(year, month - 1, day, hours, minutes);
-                        }).filter(t => !isNaN(t));
-                        
-                        const minTime = new Date(Math.min(...times));
-                        const maxTime = new Date(Math.max(...times));
-                        const timeSpanMinutes = (maxTime - minTime) / (1000 * 60);
-
-                        const stakes = allBets.map(b => parseFloat(b['Total Stake']) || 0);
-                        const avgStake = stakes.reduce((a, b) => a + b, 0) / stakes.length;
-                        const maxStakeDiff = Math.max(...stakes) - Math.min(...stakes);
-                        const stakeSimilarity = maxStakeDiff <= (avgStake * 30 / 100);
-
-                        const selections = [...new Set(allBets.map(b => b['Selection Name']))];
-                        const markets = [...new Set(allBets.map(b => b.Market))];
-                        const uniquePlayers = [...new Set(allBets.map(b => b['Party ID']))];
-                        
-                        clusters.push({
-                            event: bet.Event,
-                            selections: selections,
-                            markets: markets,
-                            sport: bet['Sport Type Name'],
-                            competition: bet.Competition,
-                            eventDate: bet['Event Date'],
-                            players: uniquePlayers,
-                            allBets: allBets,
-                            bets: allBets,
-                            timeSpan: timeSpanMinutes,
-                            firstBet: minTime,
-                            lastBet: maxTime,
-                            totalStake: allBets.reduce((sum, b) => sum + parseFloat(b['Total Stake'] || 0), 0),
-                            avgStake: avgStake,
-                            stakeSimilarity: stakeSimilarity,
-                            allSameSelection: true,
-                            allSameMarket: true,
-                            fraudType: 'bonus_abuser',
-                            severity: timeSpanMinutes <= 5 ? 'critical' : timeSpanMinutes <= 15 ? 'high' : 'medium'
-                        });
-                        
-                        return; // Continuer avec le prochain pari
                     }
 
-                    // PHASE 2: Chercher sur MÊME MARKET + SÉLECTIONS OPPOSÉES
-                    const sameMarketOppositeSelection = data
-                        .map((b, i) => ({ ...b, originalIndex: i }))
-                        .filter((b, i) => {
-                            if (i === index || processed.has(i)) return false;
-                            
-                            let bTime;
-                            try {
-                                const [datePart, timePart] = b['Placement Time']?.split(' ') || [];
-                                const [day, month, year] = datePart?.split('/') || [];
-                                const [hours, minutes] = timePart?.split(':') || [];
-                                bTime = new Date(year, month - 1, day, hours, minutes);
-                            } catch (e) {
-                                return false;
-                            }
-                            if (isNaN(bTime)) return false;
+                    const opp = data.map((b,i)=>({...b,originalIndex:i})).filter((b,i)=>{
+                        if(i===idx||proc.has(i)) return false;
+                        let t2;
+                        try {
+                            const [d,t]=(b['Placement Time']||'').split(' ');
+                            const [dy,mo,yr]=d.split('/');
+                            const [h,m]=t.split(':');
+                            t2=new Date(yr,mo-1,dy,h,m);
+                        } catch(e) { return false; }
+                        if(isNaN(t2)) return false;
+                        const diff=Math.abs(t2-bt)/(1000*60);
+                        return b.Event===bet.Event && b.Market===bet.Market && 
+                               areOpposite(bet['Selection Name'],b['Selection Name'],bet.Market) &&
+                               b['Party ID']!==bet['Party ID'] && diff<=timeWindow;
+                    });
 
-                            const timeDiff = Math.abs(bTime - betTime) / (1000 * 60);
-                            
-                            const sameEvent = b.Event === bet.Event;
-                            const sameMarket = b.Market === bet.Market;
-                            const oppositeSelection = areOppositeSelections(bet['Selection Name'], b['Selection Name'], bet.Market);
-                            const differentPlayer = b['Party ID'] !== bet['Party ID'];
-                            const withinTimeWindow = timeDiff <= timeWindow;
-                            
-                            return sameEvent && sameMarket && oppositeSelection && differentPlayer && withinTimeWindow;
-                        });
-
-                    if (sameMarketOppositeSelection.length > 0) {
-                        const allBets = [{ ...bet, originalIndex: index }, ...sameMarketOppositeSelection];
-                        allBets.forEach(b => processed.add(b.originalIndex));
-
-                        const times = allBets.map(b => {
-                            const [datePart, timePart] = b['Placement Time']?.split(' ') || [];
-                            const [day, month, year] = datePart?.split('/') || [];
-                            const [hours, minutes] = timePart?.split(':') || [];
-                            return new Date(year, month - 1, day, hours, minutes);
-                        }).filter(t => !isNaN(t));
+                    if(opp.length>0) {
+                        const all=[{...bet,originalIndex:idx},...opp];
+                        all.forEach(b=>proc.add(b.originalIndex));
+                        const times=all.map(b=>{
+                            try{
+                                const[d,t]=b['Placement Time'].split(' ');
+                                const[dy,mo,yr]=d.split('/');
+                                const[h,m]=t.split(':');
+                                return new Date(yr,mo-1,dy,h,m);
+                            }catch(e){return null;}
+                        }).filter(t=>t&&!isNaN(t));
+                        const minT=new Date(Math.min(...times)), maxT=new Date(Math.max(...times));
+                        const span=(maxT-minT)/(1000*60);
+                        const stakes=all.map(b=>parseFloat(b['Total Stake'])||0);
+                        const avg=stakes.reduce((a,b)=>a+b,0)/stakes.length;
+                        const players=[...new Set(all.map(b=>b['Party ID']))];
+                        const sels=[...new Set(all.map(b=>b['Selection Name']))];
+                        const mkts=[...new Set(all.map(b=>b.Market))];
                         
-                        const minTime = new Date(Math.min(...times));
-                        const maxTime = new Date(Math.max(...times));
-                        const timeSpanMinutes = (maxTime - minTime) / (1000 * 60);
-
-                        const stakes = allBets.map(b => parseFloat(b['Total Stake']) || 0);
-                        const avgStake = stakes.reduce((a, b) => a + b, 0) / stakes.length;
-                        const maxStakeDiff = Math.max(...stakes) - Math.min(...stakes);
-                        const stakeSimilarity = maxStakeDiff <= (avgStake * 30 / 100);
-
-                        const selections = [...new Set(allBets.map(b => b['Selection Name']))];
-                        const markets = [...new Set(allBets.map(b => b.Market))];
-                        const uniquePlayers = [...new Set(allBets.map(b => b['Party ID']))];
-
-                        clusters.push({
-                            event: bet.Event,
-                            selections: selections,
-                            markets: markets,
-                            sport: bet['Sport Type Name'],
-                            competition: bet.Competition,
-                            eventDate: bet['Event Date'],
-                            players: uniquePlayers,
-                            allBets: allBets,
-                            bets: allBets,
-                            timeSpan: timeSpanMinutes,
-                            firstBet: minTime,
-                            lastBet: maxTime,
-                            totalStake: allBets.reduce((sum, b) => sum + parseFloat(b['Total Stake'] || 0), 0),
-                            avgStake: avgStake,
-                            stakeSimilarity: stakeSimilarity,
-                            allSameSelection: false,
-                            allSameMarket: true,
-                            fraudType: 'money_laundering',
-                            severity: timeSpanMinutes <= 5 ? 'critical' : timeSpanMinutes <= 15 ? 'high' : 'medium'
-                        });
-                        
-                        return;
-                    }
-
-                    // PHASE 3: Chercher sur MÊME MARKET (autres combinaisons)
-                    const sameMarketOther = data
-                        .map((b, i) => ({ ...b, originalIndex: i }))
-                        .filter((b, i) => {
-                            if (i === index || processed.has(i)) return false;
-                            
-                            let bTime;
-                            try {
-                                const [datePart, timePart] = b['Placement Time']?.split(' ') || [];
-                                const [day, month, year] = datePart?.split('/') || [];
-                                const [hours, minutes] = timePart?.split(':') || [];
-                                bTime = new Date(year, month - 1, day, hours, minutes);
-                            } catch (e) {
-                                return false;
-                            }
-                            if (isNaN(bTime)) return false;
-
-                            const timeDiff = Math.abs(bTime - betTime) / (1000 * 60);
-                            
-                            const sameEvent = b.Event === bet.Event;
-                            const sameMarket = b.Market === bet.Market;
-                            const differentPlayer = b['Party ID'] !== bet['Party ID'];
-                            const withinTimeWindow = timeDiff <= timeWindow;
-                            
-                            return sameEvent && sameMarket && differentPlayer && withinTimeWindow;
-                        });
-
-                    if (sameMarketOther.length > 0) {
-                        const allBets = [{ ...bet, originalIndex: index }, ...sameMarketOther];
-                        allBets.forEach(b => processed.add(b.originalIndex));
-
-                        const times = allBets.map(b => {
-                            const [datePart, timePart] = b['Placement Time']?.split(' ') || [];
-                            const [day, month, year] = datePart?.split('/') || [];
-                            const [hours, minutes] = timePart?.split(':') || [];
-                            return new Date(year, month - 1, day, hours, minutes);
-                        }).filter(t => !isNaN(t));
-                        
-                        const minTime = new Date(Math.min(...times));
-                        const maxTime = new Date(Math.max(...times));
-                        const timeSpanMinutes = (maxTime - minTime) / (1000 * 60);
-
-                        const stakes = allBets.map(b => parseFloat(b['Total Stake']) || 0);
-                        const avgStake = stakes.reduce((a, b) => a + b, 0) / stakes.length;
-                        const maxStakeDiff = Math.max(...stakes) - Math.min(...stakes);
-                        const stakeSimilarity = maxStakeDiff <= (avgStake * 30 / 100);
-
-                        const selections = [...new Set(allBets.map(b => b['Selection Name']))];
-                        const markets = [...new Set(allBets.map(b => b.Market))];
-                        const uniquePlayers = [...new Set(allBets.map(b => b['Party ID']))];
-
-                        clusters.push({
-                            event: bet.Event,
-                            selections: selections,
-                            markets: markets,
-                            sport: bet['Sport Type Name'],
-                            competition: bet.Competition,
-                            eventDate: bet['Event Date'],
-                            players: uniquePlayers,
-                            allBets: allBets,
-                            bets: allBets,
-                            timeSpan: timeSpanMinutes,
-                            firstBet: minTime,
-                            lastBet: maxTime,
-                            totalStake: allBets.reduce((sum, b) => sum + parseFloat(b['Total Stake'] || 0), 0),
-                            avgStake: avgStake,
-                            stakeSimilarity: stakeSimilarity,
-                            allSameSelection: false,
-                            allSameMarket: true,
-                            fraudType: 'suspicious',
-                            severity: timeSpanMinutes <= 5 ? 'critical' : timeSpanMinutes <= 15 ? 'high' : 'medium'
+                        cls.push({
+                            event:bet.Event, selections:sels, markets:mkts,
+                            sport:bet['Sport Type Name'], competition:bet.Competition,
+                            players, allBets:all, timeSpan:span, firstBet:minT, lastBet:maxT,
+                            totalStake:stakes.reduce((a,b)=>a+b,0), avgStake:avg,
+                            fraudType:'money_laundering', allSameSelection:false, allSameMarket:true,
+                            severity:span<=5?'critical':span<=15?'high':'medium'
                         });
                     }
                 });
 
-                let sorted = [...clusters];
-                if (sortBy === 'time') {
-                    sorted = sorted.sort((a, b) => a.timeSpan - b.timeSpan);
-                } else if (sortBy === 'players') {
-                    sorted = sorted.sort((a, b) => b.players.length - a.players.length);
-                } else if (sortBy === 'severity') {
-                    const severityOrder = { critical: 0, high: 1, medium: 2 };
-                    sorted = sorted.sort((a, b) => severityOrder[a.severity] - severityOrder[b.severity]);
+                let sorted=[...cls];
+                if(sortBy==='time') sorted.sort((a,b)=>a.timeSpan-b.timeSpan);
+                else if(sortBy==='players') sorted.sort((a,b)=>b.players.length-a.players.length);
+                else if(sortBy==='severity') {
+                    const ord={critical:0,high:1,medium:2};
+                    sorted.sort((a,b)=>ord[a.severity]-ord[b.severity]);
                 }
-
                 return sorted;
-            }, [data, timeWindow, sortBy]);
+            }, [data,timeWindow,sortBy]);
 
             const playerAnalysis = useMemo(() => {
-                if (!fraudClusters.length) return [];
-
-                const playersMap = new Map();
-
-                fraudClusters.forEach((cluster) => {
-                    cluster.players.forEach((playerId) => {
-                        if (!playersMap.has(playerId)) {
-                            playersMap.set(playerId, {
-                                id: playerId,
-                                clustersCount: 0,
-                                totalStake: 0,
-                                events: [],
-                                associates: new Set(),
-                                betsCount: 0
-                            });
-                        }
-
-                        const playerData = playersMap.get(playerId);
-                        playerData.clustersCount++;
-                        
-                        playerData.events.push({
-                            event: cluster.event,
-                            date: cluster.firstBet,
-                            sport: cluster.sport
+                if(!fraudClusters.length) return [];
+                const pm=new Map();
+                fraudClusters.forEach(c => {
+                    c.players.forEach(pid => {
+                        if(!pm.has(pid)) pm.set(pid,{id:pid,clustersCount:0,totalStake:0,events:[],associates:new Set(),betsCount:0});
+                        const pd=pm.get(pid);
+                        pd.clustersCount++;
+                        pd.events.push({event:c.event,date:c.firstBet,sport:c.sport});
+                        c.allBets.filter(b=>b['Party ID']===pid).forEach(b=>{
+                            pd.totalStake+=parseFloat(b['Total Stake']||0);
+                            pd.betsCount++;
                         });
-
-                        const playerBets = cluster.allBets.filter(b => b['Party ID'] === playerId);
-                        playerBets.forEach(bet => {
-                            playerData.totalStake += parseFloat(bet['Total Stake'] || 0);
-                            playerData.betsCount++;
-                        });
-
-                        cluster.players.forEach(otherPlayer => {
-                            if (otherPlayer !== playerId) {
-                                playerData.associates.add(otherPlayer);
-                            }
-                        });
+                        c.players.forEach(op=>{if(op!==pid)pd.associates.add(op);});
                     });
                 });
-
-                return Array.from(playersMap.values())
-                    .map(p => ({
-                        ...p,
-                        associates: Array.from(p.associates)
-                    }))
-                    .sort((a, b) => b.clustersCount - a.clustersCount);
+                return Array.from(pm.values()).map(p=>({...p,associates:Array.from(p.associates)}))
+                    .sort((a,b)=>b.clustersCount-a.clustersCount);
             }, [fraudClusters]);
 
             const stats = useMemo(() => {
-                if (!fraudClusters.length) return null;
-
-                const uniquePlayers = new Set();
-                fraudClusters.forEach(c => c.players.forEach(p => uniquePlayers.add(p)));
-
+                if(!fraudClusters.length) return null;
+                const up=new Set();
+                fraudClusters.forEach(c=>c.players.forEach(p=>up.add(p)));
                 return {
-                    totalClusters: fraudClusters.length,
-                    criticalClusters: fraudClusters.filter(c => c.severity === 'critical').length,
-                    suspiciousPlayers: uniquePlayers.size,
-                    totalStakeInvolved: fraudClusters.reduce((sum, c) => sum + c.totalStake, 0),
-                    similarAmountClusters: fraudClusters.filter(c => c.stakeSimilarity).length,
-                    bonusAbusers: fraudClusters.filter(c => c.fraudType === 'bonus_abuser').length,
-                    moneyLaundering: fraudClusters.filter(c => c.fraudType === 'money_laundering').length
+                    totalClusters:fraudClusters.length,
+                    criticalClusters:fraudClusters.filter(c=>c.severity==='critical').length,
+                    suspiciousPlayers:up.size,
+                    totalStakeInvolved:fraudClusters.reduce((s,c)=>s+c.totalStake,0),
+                    bonusAbusers:fraudClusters.filter(c=>c.fraudType==='bonus_abuser').length,
+                    moneyLaundering:fraudClusters.filter(c=>c.fraudType==='money_laundering').length
                 };
             }, [fraudClusters]);
 
             const exportResults = () => {
-                if (!fraudClusters.length) return;
-
+                if(!fraudClusters.length) return;
                 const csv = [
-                    ['Événement', 'Markets', 'Sélections', 'Joueurs Impliqués', 'Nombre Joueurs', 'Écart Temporel (min)', 'Type de Fraude', 'Sévérité', 'Mise Totale', 'Mise Moyenne', 'Premier Paris', 'Dernier Paris'].join(';'),
-                    ...fraudClusters.map(c => [
-                        c.event,
-                        c.markets.join(' / '),
-                        c.selections.join(' / '),
-                        c.players.join(' | '),
-                        c.players.length,
-                        c.timeSpan.toFixed(2),
-                        c.fraudType === 'bonus_abuser' ? 'BONUS ABUSER' : c.fraudType === 'money_laundering' ? 'BLANCHIMENT' : c.fraudType === 'suspicious' ? 'SUSPECT' : 'AUTRE',
-                        c.severity === 'critical' ? 'CRITIQUE' : c.severity === 'high' ? 'ÉLEVÉ' : 'MOYEN',
-                        c.totalStake.toFixed(2),
-                        c.avgStake.toFixed(2),
-                        c.firstBet.toLocaleString('fr-FR'),
-                        c.lastBet.toLocaleString('fr-FR')
+                    ['Événement','Markets','Sélections','Joueurs','Nb Joueurs','Écart(min)','Type','Sévérité','Mise Tot','Mise Moy'].join(';'),
+                    ...fraudClusters.map(c=>[
+                        c.event,c.markets.join('/'),c.selections.join('/'),c.players.join('|'),
+                        c.players.length,c.timeSpan.toFixed(2),
+                        c.fraudType==='bonus_abuser'?'BONUS':c.fraudType==='money_laundering'?'BLANCHIMENT':'AUTRE',
+                        c.severity==='critical'?'CRITIQUE':c.severity==='high'?'ÉLEVÉ':'MOYEN',
+                        c.totalStake.toFixed(2),c.avgStake.toFixed(2)
                     ].join(';'))
                 ].join('\n');
-
-                const blob = new Blob(['\ufeff' + csv], { type: 'text/csv;charset=utf-8;' });
-                const url = URL.createObjectURL(blob);
-                const a = document.createElement('a');
-                a.href = url;
-                a.download = `fraude_detection_${new Date().toISOString().split('T')[0]}.csv`;
+                const blob=new Blob(['\ufeff'+csv],{type:'text/csv;charset=utf-8;'});
+                const url=URL.createObjectURL(blob);
+                const a=document.createElement('a');
+                a.href=url;
+                a.download=`fraude_${new Date().toISOString().split('T')[0]}.csv`;
                 a.click();
                 URL.revokeObjectURL(url);
             };
 
-            const getSeverityColor = (severity) => {
-                switch(severity) {
-                    case 'critical': return 'bg-red-100 border-red-500 text-red-900';
-                    case 'high': return 'bg-orange-100 border-orange-500 text-orange-900';
-                    case 'medium': return 'bg-yellow-100 border-yellow-500 text-yellow-900';
-                    default: return 'bg-gray-100 border-gray-500 text-gray-900';
-                }
-            };
+            const getSevColor = s => s==='critical'?'bg-red-100 border-red-500':s==='high'?'bg-orange-100 border-orange-500':'bg-yellow-100 border-yellow-500';
+            const getSevBadge = s => s==='critical'?'bg-red-600':s==='high'?'bg-orange-600':'bg-yellow-600';
+            const getFraudBadge = f => f==='bonus_abuser'?{bg:'bg-green-600',txt:'🎁 BONUS ABUSER',desc:'Même sélection'}:
+                f==='money_laundering'?{bg:'bg-red-600',txt:'⚠️ BLANCHIMENT',desc:'Sélections opposées'}:
+                {bg:'bg-orange-600',txt:'🔍 SUSPECT',desc:'Comportement inhabituel'};
 
-            const getSeverityBadge = (severity) => {
-                switch(severity) {
-                    case 'critical': return 'bg-red-600 text-white';
-                    case 'high': return 'bg-orange-600 text-white';
-                    case 'medium': return 'bg-yellow-600 text-white';
-                    default: return 'bg-gray-600 text-white';
-                }
-            };
-
-            const getFraudTypeBadge = (fraudType) => {
-                switch(fraudType) {
-                    case 'bonus_abuser': 
-                        return { 
-                            bg: 'bg-green-600', 
-                            text: '🎁 BONUS ABUSER / MULTI-COMPTE',
-                            description: 'Même sélection - Contournement limites ou abus de bonus'
-                        };
-                    case 'money_laundering': 
-                        return { 
-                            bg: 'bg-red-600', 
-                            text: '⚠️ BLANCHIMENT / HEDGING',
-                            description: 'Sélections opposées - Limitation pertes ou blanchiment'
-                        };
-                    case 'suspicious': 
-                        return { 
-                            bg: 'bg-orange-600', 
-                            text: '🔍 SUSPECT',
-                            description: 'Même market - Comportement inhabituel'
-                        };
-                    default: 
-                        return { 
-                            bg: 'bg-gray-600', 
-                            text: '❓ À ANALYSER',
-                            description: 'Nécessite une analyse approfondie'
-                        };
-                }
-            };
-
-            if (!data) {
+            if(!data) {
                 return (
                     <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 p-8">
                         <div className="max-w-4xl mx-auto">
                             <div className="text-center mb-12">
-                                <h1 className="text-4xl font-bold text-white mb-4">
-                                    🔍 Détection de Fraude - Paris Coordonnés
-                                </h1>
-                                <p className="text-slate-300 text-lg">
-                                    Identifiez les réseaux de comptes frauduleux en quelques secondes
-                                </p>
+                                <h1 className="text-4xl font-bold text-white mb-4">🔍 Détection de Fraude</h1>
+                                <p className="text-slate-300">Identifiez les réseaux de comptes frauduleux</p>
                             </div>
-
                             <div className="bg-white rounded-2xl shadow-2xl p-12">
                                 <div className="flex flex-col items-center">
-                                    <div className="w-24 h-24 bg-blue-100 rounded-full flex items-center justify-center mb-6">
-                                        <svg className="w-12 h-12 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
-                                        </svg>
-                                    </div>
-                                    
-                                    <h2 className="text-2xl font-semibold text-gray-900 mb-3">
-                                        Importer les données de paris
-                                    </h2>
-                                    
-                                    <p className="text-gray-600 text-center mb-8 max-w-md">
-                                        Glissez-déposez votre fichier CSV ou Excel (.xlsx, .xls) ou cliquez pour sélectionner
-                                    </p>
-
                                     <label className="cursor-pointer">
-                                        <input
-                                            type="file"
-                                            accept=".csv,.xlsx,.xls"
-                                            onChange={handleFileUpload}
-                                            className="hidden"
-                                        />
-                                        <div className="px-8 py-4 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-xl transition-colors duration-200 shadow-lg hover:shadow-xl">
-                                            📁 Sélectionner un fichier (CSV ou Excel)
+                                        <input type="file" accept=".csv,.xlsx,.xls" onChange={handleFileUpload} className="hidden"/>
+                                        <div className="px-8 py-4 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-xl">
+                                            📁 Sélectionner fichier (CSV/Excel)
                                         </div>
                                     </label>
-
-                                    <div className="mt-12 w-full max-w-2xl">
-                                        <h3 className="text-lg font-semibold text-gray-900 mb-4 text-center">
-                                            Types de fraude détectés
-                                        </h3>
-                                        <div className="grid grid-cols-1 gap-4">
-                                            <div className="bg-green-50 rounded-lg p-4 border-l-4 border-green-600">
-                                                <div className="font-semibold text-green-900 mb-2">🎁 Bonus Abuser / Multi-compte</div>
-                                                <div className="text-sm text-green-700">Même market, même sélection - Contournement des limites ou abus de bonus</div>
-                                            </div>
-                                            <div className="bg-red-50 rounded-lg p-4 border-l-4 border-red-600">
-                                                <div className="font-semibold text-red-900 mb-2">⚠️ Blanchiment / Hedging</div>
-                                                <div className="text-sm text-red-700">Même market, sélections opposées - Limitation pertes ou blanchiment</div>
-                                            </div>
-                                            <div className="bg-orange-50 rounded-lg p-4 border-l-4 border-orange-600">
-                                                <div className="font-semibold text-orange-900 mb-2">🔍 Suspect</div>
-                                                <div className="text-sm text-orange-700">Même market, comportement inhabituel</div>
-                                            </div>
+                                    <div className="mt-12 w-full max-w-2xl grid gap-4">
+                                        <div className="bg-green-50 rounded-lg p-4 border-l-4 border-green-600">
+                                            <div className="font-semibold text-green-900 mb-2">🎁 Bonus Abuser</div>
+                                            <div className="text-sm text-green-700">Même market + même sélection</div>
                                         </div>
-                                        
-                                        <div className="mt-8 grid grid-cols-3 gap-6">
-                                            <div className="text-center p-4 bg-red-50 rounded-lg">
-                                                <div className="text-red-600 font-bold text-lg mb-1">🔴 0-5 min</div>
-                                                <div className="text-sm text-gray-600">CRITIQUE</div>
-                                            </div>
-                                            <div className="text-center p-4 bg-orange-50 rounded-lg">
-                                                <div className="text-orange-600 font-bold text-lg mb-1">🟠 5-15 min</div>
-                                                <div className="text-sm text-gray-600">ÉLEVÉ</div>
-                                            </div>
-                                            <div className="text-center p-4 bg-yellow-50 rounded-lg">
-                                                <div className="text-yellow-600 font-bold text-lg mb-1">🟡 15+ min</div>
-                                                <div className="text-sm text-gray-600">MOYEN</div>
-                                            </div>
+                                        <div className="bg-red-50 rounded-lg p-4 border-l-4 border-red-600">
+                                            <div className="font-semibold text-red-900 mb-2">⚠️ Blanchiment</div>
+                                            <div className="text-sm text-red-700">Même market + sélections opposées</div>
                                         </div>
                                     </div>
                                 </div>
@@ -673,20 +286,12 @@
                                     <p className="text-gray-600 mt-1">{data.length} paris analysés</p>
                                 </div>
                                 <div className="flex gap-3">
-                                    <button
-                                        onClick={exportResults}
-                                        className="flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors"
-                                    >
-                                        💾 Exporter Résultats
+                                    <button onClick={exportResults} className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700">
+                                        💾 Exporter
                                     </button>
-                                    <label className="cursor-pointer flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors">
-                                        📁 Nouveau fichier
-                                        <input
-                                            type="file"
-                                            accept=".csv,.xlsx,.xls"
-                                            onChange={handleFileUpload}
-                                            className="hidden"
-                                        />
+                                    <label className="cursor-pointer px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700">
+                                        📁 Nouveau
+                                        <input type="file" accept=".csv,.xlsx,.xls" onChange={handleFileUpload} className="hidden"/>
                                     </label>
                                 </div>
                             </div>
@@ -694,421 +299,223 @@
 
                         <div className="bg-white rounded-xl shadow-sm mb-6">
                             <div className="flex border-b border-gray-200">
-                                <button
-                                    onClick={() => setActiveTab('clusters')}
-                                    className={`px-6 py-4 font-medium text-sm transition-colors ${
-                                        activeTab === 'clusters'
-                                            ? 'border-b-2 border-blue-600 text-blue-600'
-                                            : 'text-gray-600 hover:text-gray-900'
-                                    }`}
-                                >
-                                    📊 Clusters Suspects ({fraudClusters.length})
+                                <button onClick={()=>setActiveTab('clusters')} 
+                                    className={`px-6 py-4 font-medium ${activeTab==='clusters'?'border-b-2 border-blue-600 text-blue-600':'text-gray-600'}`}>
+                                    📊 Clusters ({fraudClusters.length})
                                 </button>
-                                <button
-                                    onClick={() => setActiveTab('players')}
-                                    className={`px-6 py-4 font-medium text-sm transition-colors ${
-                                        activeTab === 'players'
-                                            ? 'border-b-2 border-blue-600 text-blue-600'
-                                            : 'text-gray-600 hover:text-gray-900'
-                                    }`}
-                                >
-                                    👥 Analyse Joueurs ({playerAnalysis.length})
+                                <button onClick={()=>setActiveTab('players')} 
+                                    className={`px-6 py-4 font-medium ${activeTab==='players'?'border-b-2 border-blue-600 text-blue-600':'text-gray-600'}`}>
+                                    👥 Joueurs ({playerAnalysis.length})
                                 </button>
                             </div>
                         </div>
 
                         {stats && (
-                            <div className="grid grid-cols-7 gap-4 mb-6">
+                            <div className="grid grid-cols-6 gap-4 mb-6">
                                 <div className="bg-white rounded-xl shadow-sm p-6">
-                                    <div className="flex items-center justify-between">
-                                        <div>
-                                            <p className="text-sm text-gray-600 mb-1">Clusters</p>
-                                            <p className="text-3xl font-bold text-gray-900">{stats.totalClusters}</p>
-                                        </div>
-                                        <div className="text-4xl">📊</div>
-                                    </div>
+                                    <p className="text-sm text-gray-600">Clusters</p>
+                                    <p className="text-3xl font-bold text-gray-900">{stats.totalClusters}</p>
                                 </div>
-
                                 <div className="bg-white rounded-xl shadow-sm p-6">
-                                    <div className="flex items-center justify-between">
-                                        <div>
-                                            <p className="text-sm text-gray-600 mb-1">Critiques</p>
-                                            <p className="text-3xl font-bold text-red-600">{stats.criticalClusters}</p>
-                                        </div>
-                                        <div className="text-4xl">⚠️</div>
-                                    </div>
+                                    <p className="text-sm text-gray-600">Critiques</p>
+                                    <p className="text-3xl font-bold text-red-600">{stats.criticalClusters}</p>
                                 </div>
-
                                 <div className="bg-white rounded-xl shadow-sm p-6">
-                                    <div className="flex items-center justify-between">
-                                        <div>
-                                            <p className="text-sm text-gray-600 mb-1">Joueurs</p>
-                                            <p className="text-3xl font-bold text-orange-600">{stats.suspiciousPlayers}</p>
-                                        </div>
-                                        <div className="text-4xl">👥</div>
-                                    </div>
+                                    <p className="text-sm text-gray-600">Joueurs</p>
+                                    <p className="text-3xl font-bold text-orange-600">{stats.suspiciousPlayers}</p>
                                 </div>
-
                                 <div className="bg-white rounded-xl shadow-sm p-6">
-                                    <div className="flex items-center justify-between">
-                                        <div>
-                                            <p className="text-sm text-gray-600 mb-1">Mise Totale</p>
-                                            <p className="text-2xl font-bold text-gray-900">{stats.totalStakeInvolved.toFixed(0)}€</p>
-                                        </div>
-                                        <div className="text-4xl">💰</div>
-                                    </div>
+                                    <p className="text-sm text-gray-600">Mise Tot</p>
+                                    <p className="text-2xl font-bold text-gray-900">{stats.totalStakeInvolved.toFixed(0)}€</p>
                                 </div>
-
                                 <div className="bg-white rounded-xl shadow-sm p-6">
-                                    <div className="flex items-center justify-between">
-                                        <div>
-                                            <p className="text-sm text-gray-600 mb-1">Montants ≈</p>
-                                            <p className="text-3xl font-bold text-purple-600">{stats.similarAmountClusters}</p>
-                                        </div>
-                                        <div className="text-4xl">💵</div>
-                                    </div>
+                                    <p className="text-sm text-gray-600">Bonus</p>
+                                    <p className="text-3xl font-bold text-green-600">{stats.bonusAbusers}</p>
                                 </div>
-
                                 <div className="bg-white rounded-xl shadow-sm p-6">
-                                    <div className="flex items-center justify-between">
-                                        <div>
-                                            <p className="text-sm text-gray-600 mb-1">Bonus Abuse</p>
-                                            <p className="text-3xl font-bold text-green-600">{stats.bonusAbusers}</p>
-                                        </div>
-                                        <div className="text-4xl">🎁</div>
-                                    </div>
-                                </div>
-
-                                <div className="bg-white rounded-xl shadow-sm p-6">
-                                    <div className="flex items-center justify-between">
-                                        <div>
-                                            <p className="text-sm text-gray-600 mb-1">Blanchiment</p>
-                                            <p className="text-3xl font-bold text-red-600">{stats.moneyLaundering}</p>
-                                        </div>
-                                        <div className="text-4xl">🚨</div>
-                                    </div>
+                                    <p className="text-sm text-gray-600">Blanch.</p>
+                                    <p className="text-3xl font-bold text-red-600">{stats.moneyLaundering}</p>
                                 </div>
                             </div>
                         )}
 
-                        {showDebug && (
+                        {showDebug && uploadLog.length>0 && (
                             <div className="bg-yellow-50 border-l-4 border-yellow-500 rounded-xl p-6 mb-6">
-                                <div className="flex items-start justify-between mb-4">
-                                    <div>
-                                        <h3 className="text-lg font-bold text-yellow-900 mb-2">🔍 Mode Debug - Journal d'import</h3>
-                                        <p className="text-sm text-yellow-800">Suivez le processus d'import étape par étape</p>
-                                    </div>
-                                    <button
-                                        onClick={() => setShowDebug(false)}
-                                        className="text-yellow-700 hover:text-yellow-900 font-bold text-xl"
-                                    >
-                                        ✕
-                                    </button>
+                                <div className="flex justify-between mb-4">
+                                    <h3 className="font-bold text-yellow-900">🔍 Debug</h3>
+                                    <button onClick={()=>setShowDebug(false)} className="text-yellow-700 font-bold">✕</button>
                                 </div>
-                                
-                                {uploadLog.length > 0 && (
-                                    <div className="bg-white rounded-lg p-4 mb-4">
-                                        <h4 className="font-semibold text-gray-900 mb-3">📝 Journal d'import :</h4>
-                                        <div className="space-y-2 font-mono text-sm">
-                                            {uploadLog.map((logLine, idx) => (
-                                                <div 
-                                                    key={idx} 
-                                                    className={`${
-                                                        logLine.includes('❌') ? 'text-red-700' :
-                                                        logLine.includes('⚠️') ? 'text-yellow-700' :
-                                                        logLine.includes('✅') ? 'text-green-700' :
-                                                        'text-gray-700'
-                                                    }`}
-                                                >
-                                                    {logLine}
-                                                </div>
-                                            ))}
-                                        </div>
-                                    </div>
-                                )}
-                                
-                                {detectedColumns.length > 0 && (
-                                    <>
-                                        <div className="bg-white rounded-lg p-4 mb-4">
-                                            <h4 className="font-semibold text-gray-900 mb-3">📋 Colonnes détectées ({detectedColumns.length}) :</h4>
-                                            <div className="grid grid-cols-3 gap-2">
-                                                {detectedColumns.map((col, idx) => (
-                                                    <div key={idx} className="px-3 py-2 bg-gray-100 rounded text-sm font-mono text-gray-800">
-                                                        {col}
-                                                    </div>
-                                                ))}
-                                            </div>
-                                        </div>
-                                        <div className="bg-yellow-100 rounded-lg p-4">
-                                            <p className="text-sm font-semibold text-yellow-900 mb-2">✅ Colonnes requises :</p>
-                                            <div className="text-xs text-yellow-800 font-mono space-y-1">
-                                                <div>• Placement Time</div>
-                                                <div>• Party ID</div>
-                                                <div>• Event</div>
-                                                <div>• Total Stake</div>
-                                                <div>• Selection Name</div>
-                                                <div>• Sport Type Name</div>
-                                                <div>• Competition</div>
-                                                <div>• Event Date</div>
-                                                <div>• Bet Status</div>
-                                                <div>• Market</div>
-                                            </div>
-                                        </div>
-                                    </>
-                                )}
+                                <div className="bg-white rounded p-4 space-y-2 font-mono text-sm">
+                                    {uploadLog.map((l,i)=><div key={i} className={l.includes('❌')?'text-red-700':l.includes('✅')?'text-green-700':'text-gray-700'}>{l}</div>)}
+                                </div>
                             </div>
                         )}
 
-                        {activeTab === 'clusters' ? (
+                        {activeTab==='clusters' ? (
                             <>
                                 <div className="bg-white rounded-xl shadow-sm p-4 mb-6">
-                                    <div className="flex items-center gap-6">
-                                        <div className="flex items-center gap-2">
-                                            <span className="text-2xl">⏱️</span>
-                                            <label className="flex items-center gap-2">
-                                                <span className="text-sm font-medium text-gray-700">Fenêtre temporelle:</span>
-                                                <select
-                                                    value={timeWindow}
-                                                    onChange={(e) => setTimeWindow(Number(e.target.value))}
-                                                    className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                                                >
-                                                    <option value={5}>5 minutes</option>
-                                                    <option value={15}>15 minutes</option>
-                                                    <option value={30}>30 minutes</option>
-                                                    <option value={60}>60 minutes</option>
-                                                </select>
-                                            </label>
-                                        </div>
-                                        
-                                        <div className="flex items-center gap-2">
-                                            <span className="text-2xl">🔽</span>
-                                            <label className="flex items-center gap-2">
-                                                <span className="text-sm font-medium text-gray-700">Trier par:</span>
-                                                <select
-                                                    value={sortBy}
-                                                    onChange={(e) => setSortBy(e.target.value)}
-                                                    className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                                                >
-                                                    <option value="time">Écart temporel (plus rapide)</option>
-                                                    <option value="severity">Gravité (plus critique)</option>
-                                                    <option value="players">Nombre de joueurs (plus impliqués)</option>
-                                                </select>
-                                            </label>
-                                        </div>
+                                    <div className="flex gap-6">
+                                        <label className="flex items-center gap-2">
+                                            <span className="text-sm font-medium">⏱️ Fenêtre:</span>
+                                            <select value={timeWindow} onChange={e=>setTimeWindow(+e.target.value)} 
+                                                className="px-3 py-2 border rounded-lg">
+                                                <option value={5}>5 min</option>
+                                                <option value={15}>15 min</option>
+                                                <option value={30}>30 min</option>
+                                                <option value={60}>60 min</option>
+                                            </select>
+                                        </label>
+                                        <label className="flex items-center gap-2">
+                                            <span className="text-sm font-medium">🔽 Trier:</span>
+                                            <select value={sortBy} onChange={e=>setSortBy(e.target.value)} 
+                                                className="px-3 py-2 border rounded-lg">
+                                                <option value="time">Écart temporel</option>
+                                                <option value="severity">Gravité</option>
+                                                <option value="players">Nb joueurs</option>
+                                            </select>
+                                        </label>
                                     </div>
                                 </div>
 
                                 <div className="space-y-4">
-                                    {fraudClusters.map((cluster, index) => (
-                                        <div
-                                            key={index}
-                                            className={`bg-white rounded-xl shadow-sm border-l-4 ${getSeverityColor(cluster.severity)} p-6 hover:shadow-md transition-shadow cursor-pointer`}
-                                            onClick={() => setSelectedEvent(selectedEvent === index ? null : index)}
-                                        >
-                                            <div className="flex items-start justify-between mb-4">
+                                    {fraudClusters.map((c,i)=>(
+                                        <div key={i} className={`bg-white rounded-xl shadow-sm border-l-4 ${getSevColor(c.severity)} p-6 cursor-pointer`}
+                                            onClick={()=>setSelectedEvent(selectedEvent===i?null:i)}>
+                                            <div className="flex justify-between mb-4">
                                                 <div className="flex-1">
-                                                    <div className="flex items-center gap-3 mb-2 flex-wrap">
-                                                        <span className={`px-3 py-1 rounded-full text-xs font-bold ${getSeverityBadge(cluster.severity)}`}>
-                                                            ⏱️ {cluster.timeSpan.toFixed(1)} min
+                                                    <div className="flex gap-3 mb-2 flex-wrap">
+                                                        <span className={`px-3 py-1 rounded-full text-xs font-bold text-white ${getSevBadge(c.severity)}`}>
+                                                            ⏱️ {c.timeSpan.toFixed(1)}min
                                                         </span>
-                                                        <span className={`px-3 py-1 rounded-full text-xs font-bold text-white ${getFraudTypeBadge(cluster.fraudType).bg}`}>
-                                                            {getFraudTypeBadge(cluster.fraudType).text}
+                                                        <span className={`px-3 py-1 rounded-full text-xs font-bold text-white ${getFraudBadge(c.fraudType).bg}`}>
+                                                            {getFraudBadge(c.fraudType).txt}
                                                         </span>
-                                                        <span className="text-xs text-gray-500">⚽ {cluster.sport}</span>
                                                     </div>
-                                                    <h3 className="text-lg font-semibold text-gray-900 mb-1">{cluster.event}</h3>
-                                                    <p className="text-sm text-gray-600">🏆 {cluster.competition}</p>
-                                                    <p className="text-xs text-gray-500 mt-1 italic">{getFraudTypeBadge(cluster.fraudType).description}</p>
+                                                    <h3 className="text-lg font-semibold">{c.event}</h3>
+                                                    <p className="text-sm text-gray-600">{c.competition}</p>
+                                                    <p className="text-xs text-gray-500 italic">{getFraudBadge(c.fraudType).desc}</p>
                                                 </div>
                                                 <div className="text-right">
-                                                    <p className="text-sm text-gray-600">Joueurs impliqués</p>
-                                                    <p className="text-2xl font-bold text-gray-900">{cluster.players.length}</p>
+                                                    <p className="text-sm text-gray-600">Joueurs</p>
+                                                    <p className="text-2xl font-bold">{c.players.length}</p>
                                                 </div>
                                             </div>
-
                                             <div className="bg-gray-50 rounded-lg p-4 mb-4">
-                                                <div className="mb-3">
-                                                    <p className="text-sm font-medium text-gray-700 mb-2">📊 Market(s):</p>
-                                                    <div className="flex flex-wrap gap-2">
-                                                        {cluster.markets.map((market, idx) => (
-                                                            <span key={idx} className="px-3 py-1 bg-blue-100 text-blue-900 rounded-lg text-sm font-semibold">
-                                                                {market}
-                                                            </span>
-                                                        ))}
-                                                    </div>
-                                                </div>
-                                                <div>
-                                                    <p className="text-sm font-medium text-gray-700 mb-2">
-                                                        🎯 Sélection(s):
-                                                        {cluster.allSameSelection && (
-                                                            <span className="ml-2 px-2 py-1 bg-green-100 text-green-800 rounded text-xs font-bold">
-                                                                ✅ IDENTIQUE
-                                                            </span>
-                                                        )}
-                                                    </p>
-                                                    <div className="flex flex-wrap gap-2">
-                                                        {cluster.selections.map((sel, idx) => (
-                                                            <span key={idx} className="px-3 py-1 bg-white border border-gray-300 rounded-lg text-sm font-semibold text-gray-900">
-                                                                {sel}
-                                                            </span>
-                                                        ))}
-                                                    </div>
+                                                <p className="text-sm font-medium mb-2">📊 Market: {c.markets.join(', ')}</p>
+                                                <div className="flex gap-2 flex-wrap">
+                                                    {c.selections.map((s,j)=><span key={j} className="px-3 py-1 bg-white border rounded-lg text-sm font-semibold">{s}</span>)}
                                                 </div>
                                             </div>
-
                                             <div className="grid grid-cols-4 gap-4 text-sm">
-                                                <div>
-                                                    <p className="text-gray-600">⏰ Premier pari</p>
-                                                    <p className="font-medium text-gray-900">{cluster.firstBet.toLocaleTimeString('fr-FR')}</p>
-                                                </div>
-                                                <div>
-                                                    <p className="text-gray-600">⏰ Dernier pari</p>
-                                                    <p className="font-medium text-gray-900">{cluster.lastBet.toLocaleTimeString('fr-FR')}</p>
-                                                </div>
-                                                <div>
-                                                    <p className="text-gray-600">💵 Mise totale</p>
-                                                    <p className="font-medium text-gray-900">{cluster.totalStake.toFixed(2)}€</p>
-                                                </div>
-                                                <div>
-                                                    <p className="text-gray-600">💵 Mise moyenne</p>
-                                                    <p className="font-medium text-gray-900">{cluster.avgStake.toFixed(2)}€</p>
-                                                </div>
+                                                <div><p className="text-gray-600">⏰ Premier</p><p className="font-medium">{c.firstBet.toLocaleTimeString('fr-FR')}</p></div>
+                                                <div><p className="text-gray-600">⏰ Dernier</p><p className="font-medium">{c.lastBet.toLocaleTimeString('fr-FR')}</p></div>
+                                                <div><p className="text-gray-600">💵 Total</p><p className="font-medium">{c.totalStake.toFixed(2)}€</p></div>
+                                                <div><p className="text-gray-600">💵 Moyen</p><p className="font-medium">{c.avgStake.toFixed(2)}€</p></div>
                                             </div>
-
-                                            {selectedEvent === index && (
-                                                <div className="mt-6 pt-6 border-t border-gray-200">
-                                                    <h4 className="font-semibold text-gray-900 mb-3">📋 Détail des paris ({cluster.allBets.length} paris - {cluster.players.length} joueurs uniques)</h4>
-                                                    <div className="space-y-2">
-                                                        {cluster.allBets.map((bet, bidx) => (
-                                                            <div key={bidx} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
-                                                                <div className="flex items-center gap-4 flex-wrap">
-                                                                    <span className="font-mono text-sm font-semibold text-blue-600">👤 #{bet['Party ID']}</span>
-                                                                    <span className="text-sm text-gray-600">🕐 {bet['Placement Time']}</span>
-                                                                    <span className="px-2 py-1 bg-purple-100 text-purple-800 rounded text-xs font-medium">
-                                                                        📊 {bet['Market']}
-                                                                    </span>
-                                                                    <span className="px-2 py-1 bg-blue-100 text-blue-800 rounded text-xs font-medium">
-                                                                        🎯 {bet['Selection Name']}
-                                                                    </span>
-                                                                </div>
-                                                                <div className="flex items-center gap-4">
-                                                                    <span className="text-sm font-medium">💵 {bet['Total Stake']}€</span>
-                                                                    <span className={`px-2 py-1 rounded text-xs font-medium ${
-                                                                        bet['Bet Status'] === 'Won' ? 'bg-green-100 text-green-800' : 
-                                                                        bet['Bet Status'] === 'Lost' ? 'bg-red-100 text-red-800' :
-                                                                        'bg-gray-100 text-gray-800'
-                                                                    }`}>
-                                                                        {bet['Bet Status'] === 'Won' ? '✅' : bet['Bet Status'] === 'Lost' ? '❌' : '⏸️'} {bet['Bet Status']}
-                                                                    </span>
-                                                                </div>
+                                            {selectedEvent===i && (
+                                                <div className="mt-6 pt-6 border-t space-y-2">
+                                                    <h4 className="font-semibold mb-3">📋 Détail ({c.allBets.length} paris)</h4>
+                                                    {c.allBets.map((b,j)=>(
+                                                        <div key={j} className="flex justify-between p-3 bg-gray-50 rounded-lg flex-wrap gap-4">
+                                                            <div className="flex gap-4 flex-wrap">
+                                                                <span className="font-mono text-sm font-semibold text-blue-600">👤 {b['Party ID']}</span>
+                                                                <span className="text-sm text-gray-600">🕐 {b['Placement Time']}</span>
+                                                                <span className="px-2 py-1 bg-purple-100 text-purple-800 rounded text-xs">{b.Market}</span>
+                                                                <span className="px-2 py-1 bg-blue-100 text-blue-800 rounded text-xs">{b['Selection Name']}</span>
                                                             </div>
-                                                        ))}
-                                                    </div>
+                                                            <div className="flex gap-4">
+                                                                <span className="text-sm font-medium">💵 {b['Total Stake']}€</span>
+                                                                <span className={`px-2 py-1 rounded text-xs ${b['Bet Status']==='Won'?'bg-green-100 text-green-800':b['Bet Status']==='Lost'?'bg-red-100 text-red-800':'bg-gray-100 text-gray-800'}`}>
+                                                                    {b['Bet Status']==='Won'?'✅':b['Bet Status']==='Lost'?'❌':'⏸️'} {b['Bet Status']}
+                                                                </span>
+                                                            </div>
+                                                        </div>
+                                                    ))}
                                                 </div>
                                             )}
                                         </div>
                                     ))}
                                 </div>
-
-                                {fraudClusters.length === 0 && (
+                                {fraudClusters.length===0 && (
                                     <div className="bg-white rounded-xl shadow-sm p-12 text-center">
                                         <div className="text-6xl mb-4">✅</div>
-                                        <h3 className="text-xl font-semibold text-gray-900 mb-2">Aucune activité suspecte détectée</h3>
-                                        <p className="text-gray-600">Aucun cluster de paris coordonnés trouvé avec les critères actuels.</p>
-                                        <p className="text-gray-500 text-sm mt-2">Essayez d'ajuster la fenêtre temporelle.</p>
+                                        <h3 className="text-xl font-semibold mb-2">Aucune fraude détectée</h3>
                                     </div>
                                 )}
                             </>
                         ) : (
                             <div className="space-y-4">
-                                {playerAnalysis.length === 0 ? (
-                                    <div className="bg-white rounded-xl shadow-sm p-12 text-center">
+                                {playerAnalysis.length===0 ? (
+                                    <div className="bg-white rounded-xl p-12 text-center">
                                         <div className="text-6xl mb-4">👤</div>
-                                        <h3 className="text-xl font-semibold text-gray-900 mb-2">Aucun joueur suspect</h3>
-                                        <p className="text-gray-600">Analysez d'abord les clusters dans l'onglet précédent.</p>
+                                        <h3 className="text-xl font-semibold">Aucun joueur suspect</h3>
                                     </div>
-                                ) : (
-                                    playerAnalysis.map((player, index) => (
-                                        <div
-                                            key={index}
-                                            className="bg-white rounded-xl shadow-sm p-6 hover:shadow-md transition-shadow cursor-pointer"
-                                            onClick={() => setSelectedPlayer(selectedPlayer === player.id ? null : player.id)}
-                                        >
-                                            <div className="flex items-start justify-between mb-4">
-                                                <div className="flex-1">
-                                                    <div className="flex items-center gap-3 mb-3">
-                                                        <h3 className="text-xl font-bold text-gray-900">
-                                                            👤 Joueur #{player.id}
-                                                        </h3>
-                                                        {player.clustersCount >= 5 && (
-                                                            <span className="px-3 py-1 rounded-full text-xs font-bold bg-red-600 text-white">
-                                                                ⚠️ HAUTE ACTIVITÉ
-                                                            </span>
-                                                        )}
+                                ) : playerAnalysis.map((p,i)=>(
+                                    <div key={i} className="bg-white rounded-xl shadow-sm p-6 cursor-pointer" 
+                                        onClick={()=>setSelectedPlayer(selectedPlayer===p.id?null:p.id)}>
+                                        <div className="flex justify-between mb-4">
+                                            <div className="flex-1">
+                                                <h3 className="text-xl font-bold mb-3">👤 Joueur #{p.id}</h3>
+                                                <div className="grid grid-cols-4 gap-4">
+                                                    <div className="bg-red-50 rounded-lg p-3">
+                                                        <p className="text-xs text-red-600">Clusters</p>
+                                                        <p className="text-2xl font-bold text-red-900">{p.clustersCount}</p>
                                                     </div>
-                                                    
-                                                    <div className="grid grid-cols-4 gap-4">
-                                                        <div className="bg-red-50 rounded-lg p-3">
-                                                            <p className="text-xs text-red-600 mb-1">Clusters impliqués</p>
-                                                            <p className="text-2xl font-bold text-red-900">{player.clustersCount}</p>
-                                                        </div>
-                                                        <div className="bg-orange-50 rounded-lg p-3">
-                                                            <p className="text-xs text-orange-600 mb-1">Associés uniques</p>
-                                                            <p className="text-2xl font-bold text-orange-900">{player.associates.length}</p>
-                                                        </div>
-                                                        <div className="bg-blue-50 rounded-lg p-3">
-                                                            <p className="text-xs text-blue-600 mb-1">Total des paris</p>
-                                                            <p className="text-2xl font-bold text-blue-900">{player.betsCount}</p>
-                                                        </div>
-                                                        <div className="bg-green-50 rounded-lg p-3">
-                                                            <p className="text-xs text-green-600 mb-1">Mise totale</p>
-                                                            <p className="text-2xl font-bold text-green-900">{player.totalStake.toFixed(0)}€</p>
-                                                        </div>
+                                                    <div className="bg-orange-50 rounded-lg p-3">
+                                                        <p className="text-xs text-orange-600">Associés</p>
+                                                        <p className="text-2xl font-bold text-orange-900">{p.associates.length}</p>
+                                                    </div>
+                                                    <div className="bg-blue-50 rounded-lg p-3">
+                                                        <p className="text-xs text-blue-600">Paris</p>
+                                                        <p className="text-2xl font-bold text-blue-900">{p.betsCount}</p>
+                                                    </div>
+                                                    <div className="bg-green-50 rounded-lg p-3">
+                                                        <p className="text-xs text-green-600">Mise</p>
+                                                        <p className="text-2xl font-bold text-green-900">{p.totalStake.toFixed(0)}€</p>
                                                     </div>
                                                 </div>
                                             </div>
-
-                                            {selectedPlayer === player.id && (
-                                                <div className="mt-6 pt-6 border-t border-gray-200 space-y-6">
-                                                    <div>
-                                                        <h4 className="font-semibold text-gray-900 mb-3 flex items-center gap-2">
-                                                            🔗 Réseau d'associés ({player.associates.length})
-                                                        </h4>
-                                                        <div className="flex flex-wrap gap-2">
-                                                            {player.associates.map((associate, idx) => (
-                                                                <span 
-                                                                    key={idx}
-                                                                    className="px-3 py-1 bg-blue-100 text-blue-800 rounded-lg text-sm font-semibold hover:bg-blue-200 cursor-pointer"
-                                                                    onClick={(e) => {
-                                                                        e.stopPropagation();
-                                                                        setActiveTab('players');
-                                                                        setSelectedPlayer(associate);
-                                                                    }}
-                                                                >
-                                                                    👤 #{associate}
-                                                                </span>
-                                                            ))}
-                                                        </div>
-                                                    </div>
-
-                                                    <div>
-                                                        <h4 className="font-semibold text-gray-900 mb-3 flex items-center gap-2">
-                                                            📋 Événements suspects ({player.events.length})
-                                                        </h4>
-                                                        <div className="space-y-2">
-                                                            {player.events.map((event, idx) => (
-                                                                <div key={idx} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
-                                                                    <div>
-                                                                        <p className="font-medium text-gray-900">{event.event}</p>
-                                                                        <p className="text-sm text-gray-600">⚽ {event.sport}</p>
-                                                                    </div>
-                                                                    <div className="text-right text-sm text-gray-600">
-                                                                        🕐 {event.date.toLocaleDateString('fr-FR')} {event.date.toLocaleTimeString('fr-FR')}
-                                                                    </div>
-                                                                </div>
-                                                            ))}
-                                                        </div>
+                                        </div>
+                                        {selectedPlayer===p.id && (
+                                            <div className="mt-6 pt-6 border-t space-y-6">
+                                                <div>
+                                                    <h4 className="font-semibold mb-3">🔗 Associés ({p.associates.length})</h4>
+                                                    <div className="flex flex-wrap gap-2">
+                                                        {p.associates.map((a,j)=>
+                                                            <span key={j} className="px-3 py-1 bg-blue-100 text-blue-800 rounded-lg text-sm font-semibold cursor-pointer hover:bg-blue-200"
+                                                                onClick={e=>{e.stopPropagation();setSelectedPlayer(a);}}>
+                                                                👤 #{a}
+                                                            </span>
+                                                        )}
                                                     </div>
                                                 </div>
-                                            )}
-                                        </div>
+                                                <div>
+                                                    <h4 className="font-semibold mb-3">📋 Événements ({p.events.length})</h4>
+                                                    <div className="space-y-2">
+                                                        {p.events.map((e,j)=>(
+                                                            <div key={j} className="flex justify-between p-3 bg-gray-50 rounded-lg">
+                                                                <div>
+                                                                    <p className="font-medium">{e.event}</p>
+                                                                    <p className="text-sm text-gray-600">{e.sport}</p>
+                                                                </div>
+                                                                <p className="text-sm text-gray-600">{e.date.toLocaleString('fr-FR')}</p>
+                                                            </div>
+                                                        ))}
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        )}
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+                    </div>
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<FraudDetectionDashboard />);
+    </script>
+</body>
+</html>
