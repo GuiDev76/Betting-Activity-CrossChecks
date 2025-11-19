@@ -62,8 +62,27 @@
                     try {
                         const [d,t] = bet['Placement Time']?.split(' ')||[];
                         const [dy,mo,yr] = d?.split('/')||[];
-                        const [h,m] = t?.split(':')||[];
-                        betTime = new Date(yr,mo-1,dy,h,m);
+                        
+                        // Gérer le format AM/PM
+                        let timeStr = t;
+                        let isPM = false;
+                        
+                        if (t && (t.includes('AM') || t.includes('PM') || t.includes('am') || t.includes('pm'))) {
+                            isPM = t.toUpperCase().includes('PM');
+                            timeStr = t.replace(/AM|PM|am|pm/gi, '').trim();
+                        }
+                        
+                        const [h,m] = timeStr?.split(':')||[];
+                        let hours = parseInt(h);
+                        
+                        // Conversion AM/PM vers 24h
+                        if (isPM && hours !== 12) {
+                            hours += 12;
+                        } else if (!isPM && hours === 12) {
+                            hours = 0;
+                        }
+                        
+                        betTime = new Date(yr,mo-1,dy,hours,parseInt(m));
                     } catch(e) { return; }
                     if(isNaN(betTime)) return;
                     
@@ -334,29 +353,43 @@
                                         
                                         {selectedEvent===i && (
                                             <div className="space-y-2">
+                                                {/* En-tête des colonnes */}
+                                                <div className="flex justify-between p-3 bg-blue-100 rounded-lg font-semibold text-sm flex-wrap gap-4">
+                                                    <div className="flex gap-4 flex-wrap items-center">
+                                                        <span className="min-w-[80px]">🕐 Heure</span>
+                                                        <span className="min-w-[120px]">👤 Compte</span>
+                                                        <span>📊 Marché</span>
+                                                        <span>🎯 Sélection</span>
+                                                    </div>
+                                                    <div className="flex gap-4 items-center">
+                                                        <span>💵 Mise</span>
+                                                        <span>Statut</span>
+                                                    </div>
+                                                </div>
+                                                {/* Lignes de données */}
                                                 {c.bets.map((b,j)=>(
                                                     <div key={j} className="flex justify-between p-3 bg-gray-50 rounded-lg flex-wrap gap-4">
                                                         <div className="flex gap-4 flex-wrap items-center">
                                                             <span className="text-sm text-gray-500 font-medium min-w-[80px]">
-                                                                🕐 {b.parsedTime.toLocaleTimeString('fr-FR')}
+                                                                {b.parsedTime.toLocaleTimeString('fr-FR', {hour:'2-digit',minute:'2-digit'})}
                                                             </span>
                                                             <span className="font-mono text-sm font-semibold text-blue-600 min-w-[120px]">
-                                                                👤 {b['Party ID']}
+                                                                {b['Party ID']}
                                                             </span>
                                                             <span className="px-2 py-1 bg-purple-100 text-purple-800 rounded text-xs font-medium">
-                                                                📊 {b.Market}
+                                                                {b.Market}
                                                             </span>
                                                             <span className="px-2 py-1 bg-blue-100 text-blue-800 rounded text-xs font-medium">
-                                                                🎯 {b['Selection Name']}
+                                                                {b['Selection Name']}
                                                             </span>
                                                         </div>
                                                         <div className="flex gap-4 items-center">
-                                                            <span className="text-sm font-medium">💵 {b['Total Stake']}€</span>
+                                                            <span className="text-sm font-medium">{b['Total Stake']}€</span>
                                                             <span className={`px-2 py-1 rounded text-xs font-medium ${
                                                                 b['Bet Status']==='Won'?'bg-green-100 text-green-800':
                                                                 b['Bet Status']==='Lost'?'bg-red-100 text-red-800':'bg-gray-100 text-gray-800'
                                                             }`}>
-                                                                {b['Bet Status']==='Won'?'✅':b['Bet Status']==='Lost'?'❌':'⏸️'} {b['Bet Status']}
+                                                                {b['Bet Status']==='Won'?'✅ Gagné':b['Bet Status']==='Lost'?'❌ Perdu':'⏸️ En cours'}
                                                             </span>
                                                         </div>
                                                     </div>
@@ -369,13 +402,13 @@
                                         <div className="bg-gray-50 rounded p-3">
                                             <p className="text-gray-600 mb-1">⏰ Premier pari</p>
                                             <p className="font-medium text-gray-900">
-                                                {c.firstBet.toLocaleDateString('fr-FR')} {c.firstBet.toLocaleTimeString('fr-FR')}
+                                                {c.firstBet.toLocaleDateString('fr-FR')} {c.firstBet.toLocaleTimeString('fr-FR', {hour:'2-digit',minute:'2-digit'})}
                                             </p>
                                         </div>
                                         <div className="bg-gray-50 rounded p-3">
                                             <p className="text-gray-600 mb-1">⏰ Dernier pari</p>
                                             <p className="font-medium text-gray-900">
-                                                {c.lastBet.toLocaleDateString('fr-FR')} {c.lastBet.toLocaleTimeString('fr-FR')}
+                                                {c.lastBet.toLocaleDateString('fr-FR')} {c.lastBet.toLocaleTimeString('fr-FR', {hour:'2-digit',minute:'2-digit'})}
                                             </p>
                                         </div>
                                     </div>
